@@ -11,9 +11,11 @@ Engine::Engine() {
     createSurface();
     createDevice();
     createSwapchain();
+    createRenderpass();
     createGraphicsPipeline();
 }
 Engine::~Engine() {
+    vkDestroyRenderPass(device, renderpass, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     for (size_t i=0; i<swapchainImageViews.size(); i++) {
         vkDestroyImageView(device, swapchainImageViews[i], nullptr);
@@ -265,6 +267,36 @@ VkShaderModule Engine::createShaderModule(const std::vector<char>& code) {
     VkShaderModule shaderModule;
     VK_CHECK(vkCreateShaderModule(device, &shaderModuleInfo, nullptr, &shaderModule));
     return shaderModule;
+}
+void Engine::createRenderpass() {
+    // all attachments, i.e color, depth, etc
+    std::vector<VkAttachmentDescription> attachmentDescriptions(1);
+    attachmentDescriptions[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachmentDescriptions[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    attachmentDescriptions[0].format = swapchainFormat;
+    attachmentDescriptions[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // upon loading we need to clear the image
+    attachmentDescriptions[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachmentDescriptions[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachmentDescriptions[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachmentDescriptions[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+    std::vector<VkAttachmentReference> attachmentReferences(1);
+    attachmentReferences[0].attachment = 0; // index of the attachment in the attachment descriptions array
+    attachmentReferences[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // layout that the image must have upon entering the subpass
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = attachmentReferences.size();
+    // the index of the attachment in this array is referenced from the fragment shader
+    subpass.pColorAttachments = attachmentReferences.data();
+
+    VkRenderPassCreateInfo renderpassInfo{};
+    renderpassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderpassInfo.attachmentCount = 1;
+    renderpassInfo.pAttachments = attachmentDescriptions.data();
+    renderpassInfo.subpassCount = 1;
+    renderpassInfo.pSubpasses = &subpass;
+    VK_CHECK(vkCreateRenderPass(device, &renderpassInfo, nullptr, &renderpass));
 }
 
 bool Engine::checkInstanceExtensionsSupport() {
