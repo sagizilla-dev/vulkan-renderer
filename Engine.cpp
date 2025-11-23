@@ -13,6 +13,9 @@ Engine::Engine() {
     createSwapchain();
 }
 Engine::~Engine() {
+    for (size_t i=0; i<swapchainImageViews.size(); i++) {
+        vkDestroyImageView(device, swapchainImageViews[i], nullptr);
+    }
     vkDestroySwapchainKHR(device, swapchain, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(device, nullptr);
@@ -109,8 +112,10 @@ void Engine::createSwapchain() {
 
     VkSwapchainCreateInfoKHR swapchainInfo{};
     swapchainInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    // set to true if we don't care about pixels that are obscured, i.e there is another window in front of them
     swapchainInfo.clipped = VK_TRUE;
-    swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    // specifies if the alpha channel should be used for blending with other windows
+    swapchainInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; 
     swapchainInfo.imageArrayLayers = 1;
     swapchainInfo.imageColorSpace = surfaceFormat.colorSpace;
     swapchainInfo.imageExtent = surfaceExtent;
@@ -132,6 +137,36 @@ void Engine::createSwapchain() {
     swapchainInfo.preTransform = surfaceDetails.capabilities.currentTransform;
     swapchainInfo.surface = surface;
     VK_CHECK(vkCreateSwapchainKHR(device, &swapchainInfo, nullptr, &swapchain));
+
+    vkGetSwapchainImagesKHR(device, swapchain, &imageCount, nullptr);
+    swapchainImages.resize(imageCount);
+    vkGetSwapchainImagesKHR(device, swapchain, &imageCount, swapchainImages.data());
+    swapchainImageViews.resize(imageCount);
+
+    swapchainExtent = surfaceExtent;
+    swapchainFormat = surfaceFormat.format;
+    for (size_t i=0; i<imageCount; i++) {
+        createImageView(swapchainFormat, swapchainImages[i], VK_IMAGE_ASPECT_COLOR_BIT, swapchainImageViews[i]);
+    }
+}
+void Engine::createImageView(VkFormat format, VkImage& image, VkImageAspectFlags aspectMask, VkImageView& imageView) {
+    VkImageViewCreateInfo imageViewInfo{};
+    imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    imageViewInfo.format = format;
+    imageViewInfo.image = image;
+    imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    imageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    imageViewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+    imageViewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+    imageViewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+    imageViewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+    // subresourceRange describes what the image's purpose is and which part of the image should be accessed
+    imageViewInfo.subresourceRange.aspectMask = aspectMask;
+    imageViewInfo.subresourceRange.baseArrayLayer = 0;
+    imageViewInfo.subresourceRange.baseMipLevel = 0;
+    imageViewInfo.subresourceRange.layerCount = 1;
+    imageViewInfo.subresourceRange.levelCount = 1;
+    VK_CHECK(vkCreateImageView(device, &imageViewInfo, nullptr, &imageView));
 }
 
 bool Engine::checkInstanceExtensionsSupport() {
@@ -182,6 +217,9 @@ bool Engine::isDeviceSuitable(VkPhysicalDevice candidate) {
         !surfaceDetails.surfaceFormats.empty() && !surfaceDetails.presentModes.empty();
 }
 QueueFamilies Engine::findQueueFamilies(VkPhysicalDevice candidate) {
+    // this function finds indices of all queue families we need
+    // some queue families may support same operations,
+    // i.e two different queue families may support graphics operations
     uint32_t count;
     vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count, nullptr);
     std::vector<VkQueueFamilyProperties> allQueueFamilies(count);
@@ -206,6 +244,7 @@ QueueFamilies Engine::findQueueFamilies(VkPhysicalDevice candidate) {
     return _queueFamilies;
 }
 SurfaceDetails Engine::getSurfaceDetails(VkPhysicalDevice candidate) {
+    // this function finds details of the surface based on the physical device
     SurfaceDetails surfaceDetails;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(candidate, surface, &surfaceDetails.capabilities);
     uint32_t count;
@@ -237,6 +276,7 @@ VkExtent2D Engine::chooseSurfaceExtent(VkSurfaceCapabilitiesKHR capabilities) {
     if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
         return capabilities.currentExtent;
     } else {
+        // this branch means we are free to set our own extent
         int width, height;
         glfwGetFramebufferSize(window, &width, &height);
         VkExtent2D actualExtent = {

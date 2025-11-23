@@ -29,12 +29,17 @@ private:
     VkQueue presentQueue;
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
+    VkExtent2D swapchainExtent;
+    VkFormat swapchainFormat;
+    std::vector<VkImage> swapchainImages;
+    std::vector<VkImageView> swapchainImageViews;
 
     void createWindow();
     void createInstance();
     void createSurface();
     void createDevice();
     void createSwapchain();
+    void createImageView(VkFormat format, VkImage& image, VkImageAspectFlags aspectMask, VkImageView& imageView);
 
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
