@@ -15,6 +15,7 @@ Engine::Engine() {
     createGraphicsPipeline();
 }
 Engine::~Engine() {
+    vkDestroyPipeline(device, graphicsPipeline, nullptr);
     vkDestroyRenderPass(device, renderpass, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     for (size_t i=0; i<swapchainImageViews.size(); i++) {
@@ -236,6 +237,13 @@ void Engine::createGraphicsPipeline() {
     msaaInfo.sampleShadingEnable = VK_FALSE;
     msaaInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+    VkPipelineDepthStencilStateCreateInfo depthStencilInfo{};
+    depthStencilInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencilInfo.depthTestEnable = VK_FALSE;
+    depthStencilInfo.minDepthBounds = 0.0f;
+    depthStencilInfo.minDepthBounds = 1.0f;
+    depthStencilInfo.stencilTestEnable = VK_FALSE;
+    
     // this struct defines color blending settings per framebuffer
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -244,6 +252,8 @@ void Engine::createGraphicsPipeline() {
     VkPipelineColorBlendStateCreateInfo colorBlendInfo{};
     colorBlendInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     colorBlendInfo.logicOpEnable = VK_FALSE;
+    colorBlendInfo.attachmentCount = 1;
+    colorBlendInfo.pAttachments = &colorBlendAttachment;
 
     // this struct is used to pass uniforms and push constants into shaders
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
@@ -253,6 +263,25 @@ void Engine::createGraphicsPipeline() {
     pipelineLayoutInfo.pushConstantRangeCount = 0;
     pipelineLayoutInfo.pPushConstantRanges = nullptr;
     VK_CHECK(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout));
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStageInfos.data();
+    pipelineInfo.pVertexInputState = &vertexInputInfo;
+    pipelineInfo.pInputAssemblyState = &assemblyInfo;
+    pipelineInfo.pViewportState = &viewportInfo;
+    pipelineInfo.pRasterizationState = &rasterInfo;
+    pipelineInfo.pMultisampleState = &msaaInfo;
+    pipelineInfo.pDepthStencilState = &depthStencilInfo;
+    pipelineInfo.pColorBlendState = &colorBlendInfo;
+    pipelineInfo.pDynamicState = &dynamicStateInfo;
+    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.renderPass = renderpass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // in case we want to derive a pipeline from another one
+
+    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline));
 
     // we can delete shader module right away since compilation and
     // linking of shaders are done when pipeline is created
