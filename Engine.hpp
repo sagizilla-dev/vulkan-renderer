@@ -34,6 +34,7 @@ private:
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
     VkPipeline graphicsPipeline;
+    VkPipelineLayout pipelineLayout;
 
     void createWindow();
     void createInstance();

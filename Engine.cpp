@@ -14,6 +14,7 @@ Engine::Engine() {
     createGraphicsPipeline();
 }
 Engine::~Engine() {
+    vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     for (size_t i=0; i<swapchainImageViews.size(); i++) {
         vkDestroyImageView(device, swapchainImageViews[i], nullptr);
     }
@@ -186,6 +187,71 @@ void Engine::createGraphicsPipeline() {
     shaderStageInfos[1].pName = "main";
     shaderStageInfos[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     shaderStageInfos[1].pSpecializationInfo = VK_NULL_HANDLE;
+
+    std::vector<VkDynamicState> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+    VkPipelineDynamicStateCreateInfo dynamicStateInfo{};
+    dynamicStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicStateInfo.dynamicStateCount = dynamicStates.size();
+    dynamicStateInfo.pDynamicStates = dynamicStates.data();
+
+    // this fixed function describes what to expect as inputs
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+    vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    // attribute description just describes data inside the vertex
+    vertexInputInfo.vertexAttributeDescriptionCount = 0;
+    vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+    // binding is spacing between data and whether the data is per-vertex or per-instance
+    vertexInputInfo.vertexBindingDescriptionCount = 0;
+    vertexInputInfo.pVertexBindingDescriptions = nullptr;
+
+    VkPipelineInputAssemblyStateCreateInfo assemblyInfo{};
+    assemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    assemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    assemblyInfo.primitiveRestartEnable = VK_FALSE; // if set to true, then it is possible to break up lines and triangles in _STRIP topology
+
+    // this will be defined inside the render loop
+    VkPipelineViewportStateCreateInfo viewportInfo{};
+    viewportInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportInfo.scissorCount = 1;
+    viewportInfo.viewportCount = 1;
+
+    // rasterizer takes geometry that is shaped by vertices from the vertex shader and turns it into
+    // fragments to be colored by the fragment shader
+    VkPipelineRasterizationStateCreateInfo rasterInfo{};
+    rasterInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterInfo.rasterizerDiscardEnable = VK_FALSE;
+    rasterInfo.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterInfo.lineWidth = 1.0f;
+    rasterInfo.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterInfo.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterInfo.depthBiasEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo msaaInfo{};
+    msaaInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaaInfo.sampleShadingEnable = VK_FALSE;
+    msaaInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    // this struct defines color blending settings per framebuffer
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+    // this struct defines color blending settings globally
+    VkPipelineColorBlendStateCreateInfo colorBlendInfo{};
+    colorBlendInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlendInfo.logicOpEnable = VK_FALSE;
+
+    // this struct is used to pass uniforms and push constants into shaders
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 0;
+    pipelineLayoutInfo.pSetLayouts = nullptr;
+    pipelineLayoutInfo.pushConstantRangeCount = 0;
+    pipelineLayoutInfo.pPushConstantRanges = nullptr;
+    VK_CHECK(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout));
+
     // we can delete shader module right away since compilation and
     // linking of shaders are done when pipeline is created
     vkDestroyShaderModule(device, vertShaderModule, nullptr);
