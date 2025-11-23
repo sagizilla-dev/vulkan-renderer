@@ -3,8 +3,9 @@
 
 struct QueueFamilies {
     std::optional<uint32_t> graphicsFamily;
+    std::optional<uint32_t> presentFamily;
     bool isComplete() {
-        return graphicsFamily.has_value();
+        return graphicsFamily.has_value() && presentFamily.has_value();
     }
 };
 
@@ -20,6 +21,8 @@ private:
     VkDevice device;
     QueueFamilies queueFamilies;
     VkQueue graphicsQueue;
+    VkQueue presentQueue;
+    VkSurfaceKHR surface;
 
     void createWindow();
     void createInstance();
@@ -27,7 +30,8 @@ private:
     void createDevice();
 
     std::vector<const char*> instanceExtensions = {
-        
+        "VK_KHR_surface",
+        "VK_KHR_xcb_surface"
     };
     std::vector<const char*> instanceLayers = {
         "VK_LAYER_KHRONOS_validation"

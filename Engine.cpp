@@ -8,9 +8,11 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 Engine::Engine() {
     createWindow();
     createInstance();
+    createSurface();
     createDevice();
 }
 Engine::~Engine() {
+    vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
     glfwDestroyWindow(window);
@@ -48,6 +50,10 @@ void Engine::createInstance() {
     instanceInfo.ppEnabledLayerNames = instanceLayers.data();
     VK_CHECK(vkCreateInstance(&instanceInfo, nullptr, &instance));
 }
+void Engine::createSurface() {
+    glfwCreateWindowSurface(instance, window, nullptr, &surface);
+}
+
 void Engine::createDevice() {
     uint32_t count;
     vkEnumeratePhysicalDevices(instance, &count, nullptr);
@@ -70,7 +76,7 @@ void Engine::createDevice() {
     features.geometryShader = VK_TRUE;
     deviceInfo.pEnabledFeatures = &features;
     
-    std::set<uint32_t> uniqueQueueFamilies = {queueFamilies.graphicsFamily.value()};
+    std::set<uint32_t> uniqueQueueFamilies = {queueFamilies.graphicsFamily.value(), queueFamilies.presentFamily.value()};
     std::vector<VkDeviceQueueCreateInfo> queueInfos{};
     float priority = 1.0f;
     for (const auto& queueFamily: uniqueQueueFamilies) {
@@ -86,6 +92,7 @@ void Engine::createDevice() {
     VK_CHECK(vkCreateDevice(pDevice, &deviceInfo, nullptr, &device));
 
     vkGetDeviceQueue(device, queueFamilies.graphicsFamily.value(), 0, &graphicsQueue);
+    vkGetDeviceQueue(device, queueFamilies.presentFamily.value(), 0, &presentQueue);
 }
 
 bool Engine::checkInstanceExtensionsSupport() {
@@ -143,6 +150,11 @@ QueueFamilies Engine::findQueueFamilies(VkPhysicalDevice candidate) {
     for (const auto& family: allQueueFamilies) {
         if (family.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
             _queueFamilies.graphicsFamily = i;
+        }
+        VkBool32 presentSupported = VK_FALSE;
+        vkGetPhysicalDeviceSurfaceSupportKHR(candidate, i, surface, &presentSupported);
+        if (presentSupported) {
+            _queueFamilies.presentFamily = i;
         }
         if (_queueFamilies.isComplete()) {
             break;
