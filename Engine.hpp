@@ -33,6 +33,7 @@ private:
     VkFormat swapchainFormat;
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
+    VkPipeline graphicsPipeline;
 
     void createWindow();
     void createInstance();
@@ -40,6 +41,8 @@ private:
     void createDevice();
     void createSwapchain();
     void createImageView(VkFormat format, VkImage& image, VkImageAspectFlags aspectMask, VkImageView& imageView);
+    void createGraphicsPipeline();
+    VkShaderModule createShaderModule(const std::vector<char>& code);
 
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",

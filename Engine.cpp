@@ -11,6 +11,7 @@ Engine::Engine() {
     createSurface();
     createDevice();
     createSwapchain();
+    createGraphicsPipeline();
 }
 Engine::~Engine() {
     for (size_t i=0; i<swapchainImageViews.size(); i++) {
@@ -167,6 +168,37 @@ void Engine::createImageView(VkFormat format, VkImage& image, VkImageAspectFlags
     imageViewInfo.subresourceRange.layerCount = 1;
     imageViewInfo.subresourceRange.levelCount = 1;
     VK_CHECK(vkCreateImageView(device, &imageViewInfo, nullptr, &imageView));
+}
+void Engine::createGraphicsPipeline() {
+    auto vertCode = readFile("../shader.vert.spv");
+    auto fragCode = readFile("../shader.frag.spv");
+    VkShaderModule vertShaderModule = createShaderModule(vertCode);
+    VkShaderModule fragShaderModule = createShaderModule(fragCode);
+    
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(2);
+    shaderStageInfos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStageInfos[0].module = vertShaderModule;
+    shaderStageInfos[0].pName = "main";
+    shaderStageInfos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStageInfos[0].pSpecializationInfo = VK_NULL_HANDLE; // allows us to specify values for shader constants
+    shaderStageInfos[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStageInfos[1].module = fragShaderModule;
+    shaderStageInfos[1].pName = "main";
+    shaderStageInfos[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    shaderStageInfos[1].pSpecializationInfo = VK_NULL_HANDLE;
+    // we can delete shader module right away since compilation and
+    // linking of shaders are done when pipeline is created
+    vkDestroyShaderModule(device, vertShaderModule, nullptr);
+    vkDestroyShaderModule(device, fragShaderModule, nullptr);
+}
+VkShaderModule Engine::createShaderModule(const std::vector<char>& code) {
+    VkShaderModuleCreateInfo shaderModuleInfo{};
+    shaderModuleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shaderModuleInfo.codeSize = code.size();
+    shaderModuleInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+    VkShaderModule shaderModule;
+    VK_CHECK(vkCreateShaderModule(device, &shaderModuleInfo, nullptr, &shaderModule));
+    return shaderModule;
 }
 
 bool Engine::checkInstanceExtensionsSupport() {
