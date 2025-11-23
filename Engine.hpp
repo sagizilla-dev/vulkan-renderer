@@ -8,6 +8,11 @@ struct QueueFamilies {
         return graphicsFamily.has_value() && presentFamily.has_value();
     }
 };
+struct SurfaceDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    std::vector<VkSurfaceFormatKHR> surfaceFormats;
+    std::vector<VkPresentModeKHR> presentModes;
+};
 
 class Engine {
 public:
@@ -23,11 +28,13 @@ private:
     VkQueue graphicsQueue;
     VkQueue presentQueue;
     VkSurfaceKHR surface;
+    VkSwapchainKHR swapchain;
 
     void createWindow();
     void createInstance();
     void createSurface();
     void createDevice();
+    void createSwapchain();
 
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
@@ -37,10 +44,7 @@ private:
         "VK_LAYER_KHRONOS_validation"
     };
     std::vector<const char*> deviceExtensions = {
-        
-    };
-    std::vector<const char*> deviceLayers = {
-        
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME
     };
     bool checkInstanceExtensionsSupport();
     bool checkInstanceLayersSupport();
@@ -48,4 +52,8 @@ private:
     
     bool isDeviceSuitable(VkPhysicalDevice candidate);
     QueueFamilies findQueueFamilies(VkPhysicalDevice candidate);
+    SurfaceDetails getSurfaceDetails(VkPhysicalDevice candidate);
+    VkSurfaceFormatKHR chooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats);
+    VkPresentModeKHR choosePresentMode(const std::vector<VkPresentModeKHR>& presentModes);
+    VkExtent2D chooseSurfaceExtent(VkSurfaceCapabilitiesKHR capabilities);
 };
