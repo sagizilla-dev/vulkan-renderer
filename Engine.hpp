@@ -36,6 +36,7 @@ private:
     VkPipeline graphicsPipeline;
     VkPipelineLayout pipelineLayout;
     VkRenderPass renderpass;
+    std::vector<VkFramebuffer> framebuffers;
 
     void createWindow();
     void createInstance();
@@ -44,8 +45,11 @@ private:
     void createSwapchain();
     void createImageView(VkFormat format, VkImage& image, VkImageAspectFlags aspectMask, VkImageView& imageView);
     void createGraphicsPipeline();
-    VkShaderModule createShaderModule(const std::vector<char>& code);
+    void createShaderModule(VkShaderModule& shaderModule, const std::vector<char>& code);
     void createRenderpass();
+    void createFramebuffers();
+    void createCommandPool(VkCommandPool& cmdPool, VkCommandPoolCreateFlags flags, uint32_t queueFamily);
+    void createCommandBuffer(VkCommandBuffer* cmdBuffer, int count, VkCommandPool& cmdPool);
 
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
@@ -67,4 +71,6 @@ private:
     VkSurfaceFormatKHR chooseSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& formats);
     VkPresentModeKHR choosePresentMode(const std::vector<VkPresentModeKHR>& presentModes);
     VkExtent2D chooseSurfaceExtent(VkSurfaceCapabilitiesKHR capabilities);
+
+    void recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex);
 };

@@ -15,6 +15,9 @@ Engine::Engine() {
     createGraphicsPipeline();
 }
 Engine::~Engine() {
+    for (const auto framebuffer: framebuffers) {
+        vkDestroyFramebuffer(device, framebuffer, nullptr);
+    }
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
     vkDestroyRenderPass(device, renderpass, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -176,8 +179,10 @@ void Engine::createImageView(VkFormat format, VkImage& image, VkImageAspectFlags
 void Engine::createGraphicsPipeline() {
     auto vertCode = readFile("../shader.vert.spv");
     auto fragCode = readFile("../shader.frag.spv");
-    VkShaderModule vertShaderModule = createShaderModule(vertCode);
-    VkShaderModule fragShaderModule = createShaderModule(fragCode);
+    VkShaderModule vertShaderModule;
+    createShaderModule(vertShaderModule, vertCode);
+    VkShaderModule fragShaderModule;
+    createShaderModule(fragShaderModule, fragCode);
     
     std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(2);
     shaderStageInfos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -288,17 +293,16 @@ void Engine::createGraphicsPipeline() {
     vkDestroyShaderModule(device, vertShaderModule, nullptr);
     vkDestroyShaderModule(device, fragShaderModule, nullptr);
 }
-VkShaderModule Engine::createShaderModule(const std::vector<char>& code) {
+void Engine::createShaderModule(VkShaderModule& shaderModule, const std::vector<char>& code) {
     VkShaderModuleCreateInfo shaderModuleInfo{};
     shaderModuleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     shaderModuleInfo.codeSize = code.size();
     shaderModuleInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-    VkShaderModule shaderModule;
     VK_CHECK(vkCreateShaderModule(device, &shaderModuleInfo, nullptr, &shaderModule));
-    return shaderModule;
 }
 void Engine::createRenderpass() {
-    // all attachments, i.e color, depth, etc
+    // all attachments, i.e color, depth, etc, are passed from the framebuffer in
+    // the same order as they were defined during framebuffer creation
     std::vector<VkAttachmentDescription> attachmentDescriptions(1);
     attachmentDescriptions[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     attachmentDescriptions[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -326,6 +330,44 @@ void Engine::createRenderpass() {
     renderpassInfo.subpassCount = 1;
     renderpassInfo.pSubpasses = &subpass;
     VK_CHECK(vkCreateRenderPass(device, &renderpassInfo, nullptr, &renderpass));
+}
+void Engine::createFramebuffers() {
+    framebuffers.resize(swapchainImages.size());
+    for (size_t i = 0; i<swapchainImages.size(); i++) {
+        // the order of image views/attachments defined here is important
+        // image views/attachments are passed to the render pass in the same order
+        // as they are defined here
+        std::vector<VkImageView> attachments = {swapchainImageViews[i]};
+        VkFramebufferCreateInfo framebufferInfo{};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = renderpass;
+        framebufferInfo.attachmentCount = attachments.size();
+        framebufferInfo.pAttachments = attachments.data();
+        framebufferInfo.width = swapchainExtent.width;
+        framebufferInfo.height = swapchainExtent.height;
+        framebufferInfo.layers = 1;
+        VK_CHECK(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffers[i]));
+    }
+}
+void Engine::createCommandPool(VkCommandPool& cmdPool, VkCommandPoolCreateFlags flags, uint32_t queueFamily) {
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    // VK_COMMAND_POOL_CREATE_TRANSIENT_BIT means command buffers are rerecorded with new commands very often
+    // VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT means command buffers can be rerecorded individually
+    // without this flag they all have to be reset together
+    poolInfo.flags = flags;
+    poolInfo.queueFamilyIndex = queueFamily;
+    VK_CHECK(vkCreateCommandPool(device, &poolInfo, nullptr, &cmdPool));
+}
+void Engine::createCommandBuffer(VkCommandBuffer* cmdBuffer, int count, VkCommandPool& cmdPool) {
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = cmdPool;
+    allocInfo.commandBufferCount = count;
+    // VK_COMMAND_BUFFER_LEVEL_PRIMARY means buffer can be submitted to a queue for execution but cannot be called from other buffers
+    // VK_COMMAND_BUFFER_LEVEL_SECONDARY means buffer cannot be submitted to a queue for execution but can be called from other buffers
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    VK_CHECK(vkAllocateCommandBuffers(device, &allocInfo, cmdBuffer));
 }
 
 bool Engine::checkInstanceExtensionsSupport() {
@@ -446,4 +488,49 @@ VkExtent2D Engine::chooseSurfaceExtent(VkSurfaceCapabilitiesKHR capabilities) {
         actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
         return actualExtent;
     }
+}
+
+void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT means the command buffer will be rerecorded right after executing it once
+    // VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT means the command buffer is secondary and will be within a single render pass
+    // VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT means the command buffer can be resubmitted while it is already pending
+    beginInfo.flags = 0;
+    beginInfo.pInheritanceInfo = nullptr; // only relevant for secondary buffer
+    VK_CHECK(vkBeginCommandBuffer(cmdBuffer, &beginInfo));
+    {
+        VkRenderPassBeginInfo renderpassBeginInfo{};
+        renderpassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderpassBeginInfo.renderPass = renderpass;
+        renderpassBeginInfo.framebuffer = framebuffers[imageIndex];
+        renderpassBeginInfo.renderArea.extent = swapchainExtent;
+        renderpassBeginInfo.renderArea.offset = {0, 0};
+        VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+        renderpassBeginInfo.clearValueCount = 1;
+        renderpassBeginInfo.pClearValues = &clearColor;
+        // VK_SUBPASS_CONTENTS_INLINE means the render pass commands will be embedded in the primary buffer command itself
+        // VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS means the render pass commands will be executed from secondary command buffer
+        vkCmdBeginRenderPass(cmdBuffer, &renderpassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+        {
+            vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+            VkViewport viewport{};
+            viewport.x = 0.0f;
+            viewport.y = 0.0f;
+            viewport.width = static_cast<float>(swapchainExtent.width);
+            viewport.height = static_cast<float>(swapchainExtent.height);
+            viewport.minDepth = 0.0f;
+            viewport.maxDepth = 1.0f;
+            vkCmdSetViewport(cmdBuffer, 0, 1, &viewport);
+            VkRect2D scissor{};
+            scissor.extent = swapchainExtent;
+            scissor.offset = {0, 0};
+            vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
+
+            vkCmdDraw(cmdBuffer, 3, 1, 0, 0);
+        }
+        vkCmdEndRenderPass(cmdBuffer);
+    }
+    vkEndCommandBuffer(cmdBuffer);
 }
