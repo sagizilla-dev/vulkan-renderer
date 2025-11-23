@@ -8,8 +8,10 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 Engine::Engine() {
     createWindow();
     createInstance();
+    createDevice();
 }
 Engine::~Engine() {
+    vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
     glfwDestroyWindow(window);
     glfwTerminate();
@@ -46,6 +48,45 @@ void Engine::createInstance() {
     instanceInfo.ppEnabledLayerNames = instanceLayers.data();
     VK_CHECK(vkCreateInstance(&instanceInfo, nullptr, &instance));
 }
+void Engine::createDevice() {
+    uint32_t count;
+    vkEnumeratePhysicalDevices(instance, &count, nullptr);
+    std::vector<VkPhysicalDevice> devices(count);
+    vkEnumeratePhysicalDevices(instance, &count, devices.data());
+    for (const auto& candidate: devices) {
+        if (isDeviceSuitable(candidate)) {
+            pDevice = candidate;
+            queueFamilies = findQueueFamilies(candidate);
+            break;
+        }
+    }
+    if (pDevice == VK_NULL_HANDLE) throw std::runtime_error("No suitable device found");
+
+    VkDeviceCreateInfo deviceInfo{};
+    deviceInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    deviceInfo.enabledExtensionCount = deviceExtensions.size();
+    deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
+    VkPhysicalDeviceFeatures features{};
+    features.geometryShader = VK_TRUE;
+    deviceInfo.pEnabledFeatures = &features;
+    
+    std::set<uint32_t> uniqueQueueFamilies = {queueFamilies.graphicsFamily.value()};
+    std::vector<VkDeviceQueueCreateInfo> queueInfos{};
+    float priority = 1.0f;
+    for (const auto& queueFamily: uniqueQueueFamilies) {
+        VkDeviceQueueCreateInfo queueInfo{};
+        queueInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueInfo.pQueuePriorities = &priority;
+        queueInfo.queueCount = 1;
+        queueInfo.queueFamilyIndex = queueFamily;
+        queueInfos.push_back(queueInfo);
+    }
+    deviceInfo.queueCreateInfoCount = queueInfos.size();
+    deviceInfo.pQueueCreateInfos = queueInfos.data();
+    VK_CHECK(vkCreateDevice(pDevice, &deviceInfo, nullptr, &device));
+
+    vkGetDeviceQueue(device, queueFamilies.graphicsFamily.value(), 0, &graphicsQueue);
+}
 
 bool Engine::checkInstanceExtensionsSupport() {
     uint32_t count;
@@ -57,7 +98,6 @@ bool Engine::checkInstanceExtensionsSupport() {
         requestedExtensions.erase(ext.extensionName);
     return requestedExtensions.empty();
 }
-
 bool Engine::checkInstanceLayersSupport() {
     uint32_t count;
     vkEnumerateInstanceLayerProperties(&count, nullptr);
@@ -67,4 +107,47 @@ bool Engine::checkInstanceLayersSupport() {
     for (const auto& layer: availableLayers)
         requestedLayers.erase(layer.layerName);
     return requestedLayers.empty();
+}
+bool Engine::checkDeviceExtensionsSupport(VkPhysicalDevice candidate) {
+    uint32_t count;
+    vkEnumerateDeviceExtensionProperties(candidate, nullptr, &count, nullptr);
+    std::vector<VkExtensionProperties> availableExtensions(count);
+    vkEnumerateDeviceExtensionProperties(candidate, nullptr, &count, availableExtensions.data());
+    std::set<std::string> requestedExtensions(deviceExtensions.begin(), deviceExtensions.end());
+    for (const auto& ext: availableExtensions)
+        requestedExtensions.erase(ext.extensionName);
+    return requestedExtensions.empty();
+}
+bool Engine::isDeviceSuitable(VkPhysicalDevice candidate) {
+    VkPhysicalDeviceFeatures features{};
+    vkGetPhysicalDeviceFeatures(candidate, &features);
+
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(candidate, &props);
+
+    QueueFamilies _queueFamilies = findQueueFamilies(candidate);
+
+    return features.geometryShader == VK_TRUE &&
+        props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
+        checkDeviceExtensionsSupport(candidate) &&
+        _queueFamilies.isComplete();
+}
+QueueFamilies Engine::findQueueFamilies(VkPhysicalDevice candidate) {
+    uint32_t count;
+    vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count, nullptr);
+    std::vector<VkQueueFamilyProperties> allQueueFamilies(count);
+    vkGetPhysicalDeviceQueueFamilyProperties(candidate, &count, allQueueFamilies.data());
+    
+    int i = 0;
+    QueueFamilies _queueFamilies;
+    for (const auto& family: allQueueFamilies) {
+        if (family.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            _queueFamilies.graphicsFamily = i;
+        }
+        if (_queueFamilies.isComplete()) {
+            break;
+        }
+        i++;
+    }
+    return _queueFamilies;
 }
