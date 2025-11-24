@@ -40,7 +40,7 @@ struct Vertex {
     }
 };
 const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+    {{0.0f, -0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}},
     {{0.5f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
     {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}}
 };
@@ -71,6 +71,8 @@ private:
     std::vector<VkFramebuffer> framebuffers;
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
+    VkCommandPool graphicsCmdPool;
+    VkCommandPool transferCmdPool;
 
     void createWindow();
     void createInstance();

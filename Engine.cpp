@@ -14,9 +14,13 @@ Engine::Engine() {
     createRenderpass();
     createGraphicsPipeline();
     createFramebuffers();
+    createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
+    createCommandPool(transferCmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
     createVertexBuffer();
 }
 Engine::~Engine() {
+    vkDestroyCommandPool(device, transferCmdPool, nullptr);
+    destroyCommandPool(graphicsCmdPool); // command buffers are freed when command pool is destroyed
     vkDestroyBuffer(device, vertexBuffer, nullptr);
     vkFreeMemory(device, vertexBufferMemory, nullptr);
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
@@ -38,8 +42,6 @@ void Engine::run() {
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) createSemaphore(renderDone[i]);
     std::vector<VkFence> cmdBufferReady(MAX_FRAMES_IN_FLIGHT); // indicates command buffer is ready to be rerecorded
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) createFence(cmdBufferReady[i]);
-    VkCommandPool graphicsCmdPool;
-    createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
     std::vector<VkCommandBuffer> cmdBuffer(MAX_FRAMES_IN_FLIGHT);
     createCommandBuffer(cmdBuffer.data(), MAX_FRAMES_IN_FLIGHT, graphicsCmdPool);
     while (!glfwWindowShouldClose(window)) {
@@ -101,7 +103,6 @@ void Engine::run() {
         currentFrame = (currentFrame+1) % MAX_FRAMES_IN_FLIGHT;
     }
     vkDeviceWaitIdle(device);
-    destroyCommandPool(graphicsCmdPool); // command buffers are freed when command pool is destroyed
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) destroySemaphore(imageAvailable[i]);
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) destroySemaphore(renderDone[i]);
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) destroyFence(cmdBufferReady[i]);
@@ -683,10 +684,8 @@ uint32_t Engine::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags prope
     throw std::runtime_error("Cannot find a suitable memory type");
 }
 void Engine::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
-    VkCommandPool cmdPool{};
-    createCommandPool(cmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
     VkCommandBuffer cmdBuffer{};
-    createCommandBuffer(&cmdBuffer, 1, cmdPool);
+    createCommandBuffer(&cmdBuffer, 1, transferCmdPool);
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -710,7 +709,6 @@ void Engine::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize siz
     vkQueueSubmit(transferQueue, 1, &submitInfo, fence);
     vkWaitForFences(device, 1, &fence, VK_TRUE, ~0ull);
     destroyFence(fence);
-    vkDestroyCommandPool(device, cmdPool, nullptr);
 }
 
 void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
