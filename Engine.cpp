@@ -34,6 +34,49 @@ Engine::~Engine() {
 void Engine::run() {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+
+        VkSemaphore imageAvailable; // indicates the image is acquired 
+        createSemaphore(imageAvailable);
+        VkSemaphore renderDone; // rendering to an image is done
+        createSemaphore(renderDone);
+        VkFence cmdBufferReady; // indicates command buffer is ready to be rerecorded
+        createFence(cmdBufferReady);
+        VkCommandPool graphicsCmdPool;
+        createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
+        VkCommandBuffer cmdBuffer;
+        createCommandBuffer(&cmdBuffer, 1, graphicsCmdPool);
+
+        // wait until command buffer is ready to be rerecorded
+        vkWaitForFences(device, 1, &cmdBufferReady, VK_TRUE, ~0ull);
+        vkResetFences(device, 1, &cmdBufferReady);
+
+        uint32_t imageIndex;
+        // get the next available image from the swapchain, store the index in imageIndex
+        // and signal to imageAvailable once it is acquired
+        vkAcquireNextImageKHR(device, swapchain, ~0ull, imageAvailable, VK_NULL_HANDLE, &imageIndex);
+
+        vkResetCommandBuffer(cmdBuffer, 0);
+        recordCmdBuffer(cmdBuffer, imageIndex);
+
+        VkSubmitInfo submitInfo{};
+        submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submitInfo.commandBufferCount = 1;
+        submitInfo.pCommandBuffers = &cmdBuffer;
+        submitInfo.waitSemaphoreCount = 1;
+        submitInfo.pWaitSemaphores = &imageAvailable;
+        std::vector<VkPipelineStageFlags> waitStages = {
+            // stall operations at this stage and wait for the semaphore
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT 
+        };
+        submitInfo.pWaitDstStageMask = waitStages.data();
+        submitInfo.signalSemaphoreCount = 1;
+        submitInfo.pSignalSemaphores = &renderDone;
+        VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, cmdBufferReady));
+
+        destroyCommandPool(graphicsCmdPool); // command buffers are freed when command pool is destroyed
+        destroySemaphore(imageAvailable);
+        destroySemaphore(renderDone);
+        destroyFence(cmdBufferReady);
     }
 }
 
@@ -359,6 +402,9 @@ void Engine::createCommandPool(VkCommandPool& cmdPool, VkCommandPoolCreateFlags 
     poolInfo.queueFamilyIndex = queueFamily;
     VK_CHECK(vkCreateCommandPool(device, &poolInfo, nullptr, &cmdPool));
 }
+void Engine::destroyCommandPool(VkCommandPool& cmdPool) {
+    vkDestroyCommandPool(device, cmdPool, nullptr);
+}
 void Engine::createCommandBuffer(VkCommandBuffer* cmdBuffer, int count, VkCommandPool& cmdPool) {
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -368,6 +414,23 @@ void Engine::createCommandBuffer(VkCommandBuffer* cmdBuffer, int count, VkComman
     // VK_COMMAND_BUFFER_LEVEL_SECONDARY means buffer cannot be submitted to a queue for execution but can be called from other buffers
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     VK_CHECK(vkAllocateCommandBuffers(device, &allocInfo, cmdBuffer));
+}
+void Engine::createSemaphore(VkSemaphore& sem) {
+    VkSemaphoreCreateInfo semInfo{};
+    semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    vkCreateSemaphore(device, &semInfo, nullptr, &sem);
+}
+void Engine::destroySemaphore(VkSemaphore& sem) {
+    vkDestroySemaphore(device, sem, nullptr);
+}
+void Engine::createFence(VkFence& fence) {
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // fence is created as already signaled
+    vkCreateFence(device, &fenceInfo, nullptr, &fence);
+}
+void Engine::destroyFence(VkFence& fence) {
+    vkDestroyFence(device, fence, nullptr);
 }
 
 bool Engine::checkInstanceExtensionsSupport() {

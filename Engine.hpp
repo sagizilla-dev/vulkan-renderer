@@ -49,7 +49,12 @@ private:
     void createRenderpass();
     void createFramebuffers();
     void createCommandPool(VkCommandPool& cmdPool, VkCommandPoolCreateFlags flags, uint32_t queueFamily);
+    void destroyCommandPool(VkCommandPool& cmdPool);
     void createCommandBuffer(VkCommandBuffer* cmdBuffer, int count, VkCommandPool& cmdPool);
+    void createSemaphore(VkSemaphore& sem);
+    void destroySemaphore(VkSemaphore& sem);
+    void createFence(VkFence& fence);
+    void destroyFence(VkFence& fence);
 
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
