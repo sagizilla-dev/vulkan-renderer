@@ -55,6 +55,8 @@ private:
     void destroySemaphore(VkSemaphore& sem);
     void createFence(VkFence& fence);
     void destroyFence(VkFence& fence);
+    void cleanupSwapchain();
+    void recreateSwapchain();
 
     const int MAX_FRAMES_IN_FLIGHT = 3;
     uint32_t currentFrame = 0;

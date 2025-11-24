@@ -16,16 +16,10 @@ Engine::Engine() {
     createFramebuffers();
 }
 Engine::~Engine() {
-    for (const auto framebuffer: framebuffers) {
-        vkDestroyFramebuffer(device, framebuffer, nullptr);
-    }
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
     vkDestroyRenderPass(device, renderpass, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-    for (size_t i=0; i<swapchainImageViews.size(); i++) {
-        vkDestroyImageView(device, swapchainImageViews[i], nullptr);
-    }
-    vkDestroySwapchainKHR(device, swapchain, nullptr);
+    cleanupSwapchain();
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(device, nullptr);
     vkDestroyInstance(instance, nullptr);
@@ -50,12 +44,23 @@ void Engine::run() {
 
         // wait until command buffer is ready to be rerecorded
         vkWaitForFences(device, 1, &cmdBufferReady[currentFrame], VK_TRUE, ~0ull);
-        vkResetFences(device, 1, &cmdBufferReady[currentFrame]);
-
+        
         uint32_t imageIndex;
         // get the next available image from the swapchain, store the index in imageIndex
         // and signal to imageAvailable once it is acquired
-        vkAcquireNextImageKHR(device, swapchain, ~0ull, imageAvailable[currentFrame], VK_NULL_HANDLE, &imageIndex);
+        VkResult res = vkAcquireNextImageKHR(device, swapchain, ~0ull, imageAvailable[currentFrame], VK_NULL_HANDLE, &imageIndex);
+        // VK_SUBOPTIMAL_KHR means the swapchain can still be used, but the surface properties are no longer matched exactly
+        if (res==VK_ERROR_OUT_OF_DATE_KHR) {
+            // take this branch if the swapchain is incompatible with the surface
+            recreateSwapchain();
+            continue;
+        } else if (res!=VK_SUCCESS && res!=VK_SUBOPTIMAL_KHR) {
+            throw std::runtime_error("Couldn't acquire next image");
+        }
+        // reset the fence only after acquiring the next image
+        // it is important to avoid deadlock
+        // otherwise, if swapchain is recreated, fence is reset but we are waiting on it
+        vkResetFences(device, 1, &cmdBufferReady[currentFrame]);
 
         vkResetCommandBuffer(cmdBuffer[currentFrame], 0);
         recordCmdBuffer(cmdBuffer[currentFrame], imageIndex);
@@ -83,7 +88,12 @@ void Engine::run() {
         presentInfo.pWaitSemaphores = &renderDone[currentFrame];
         presentInfo.pImageIndices = &imageIndex;
         presentInfo.pResults = nullptr;
-        vkQueuePresentKHR(presentQueue, &presentInfo);
+        res = vkQueuePresentKHR(presentQueue, &presentInfo);
+        if (res==VK_ERROR_OUT_OF_DATE_KHR || res==VK_SUBOPTIMAL_KHR) {
+            recreateSwapchain();
+        } else if (res!=VK_SUCCESS) {
+            throw std::runtime_error("Couldn't acquire next image");
+        }
 
         currentFrame = (currentFrame+1) % MAX_FRAMES_IN_FLIGHT;
     }
@@ -461,6 +471,23 @@ void Engine::createFence(VkFence& fence) {
 }
 void Engine::destroyFence(VkFence& fence) {
     vkDestroyFence(device, fence, nullptr);
+}
+void Engine::cleanupSwapchain() {
+    for (const auto framebuffer: framebuffers) {
+        vkDestroyFramebuffer(device, framebuffer, nullptr);
+    }
+    for (size_t i=0; i<swapchainImageViews.size(); i++) {
+        vkDestroyImageView(device, swapchainImageViews[i], nullptr);
+    }
+    vkDestroySwapchainKHR(device, swapchain, nullptr);
+}
+void Engine::recreateSwapchain() {
+    vkDeviceWaitIdle(device);
+    
+    cleanupSwapchain();
+    
+    createSwapchain();
+    createFramebuffers();
 }
 
 bool Engine::checkInstanceExtensionsSupport() {
