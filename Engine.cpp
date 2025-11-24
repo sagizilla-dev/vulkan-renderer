@@ -13,6 +13,7 @@ Engine::Engine() {
     createSwapchain();
     createRenderpass();
     createGraphicsPipeline();
+    createFramebuffers();
 }
 Engine::~Engine() {
     for (const auto framebuffer: framebuffers) {
@@ -32,52 +33,65 @@ Engine::~Engine() {
     glfwTerminate();
 }
 void Engine::run() {
+    // instead of having 1 frame in flight and making CPU wait for GPU to finish work, 
+    // we keep pumping work from CPU to GPU by having multiple frames in flight
+    std::vector<VkSemaphore> imageAvailable(MAX_FRAMES_IN_FLIGHT); // indicates the image is acquired 
+    for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) createSemaphore(imageAvailable[i]);
+    std::vector<VkSemaphore> renderDone(MAX_FRAMES_IN_FLIGHT); // rendering to an image is done
+    for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) createSemaphore(renderDone[i]);
+    std::vector<VkFence> cmdBufferReady(MAX_FRAMES_IN_FLIGHT); // indicates command buffer is ready to be rerecorded
+    for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) createFence(cmdBufferReady[i]);
+    VkCommandPool graphicsCmdPool;
+    createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
+    std::vector<VkCommandBuffer> cmdBuffer(MAX_FRAMES_IN_FLIGHT);
+    createCommandBuffer(cmdBuffer.data(), MAX_FRAMES_IN_FLIGHT, graphicsCmdPool);
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
-        VkSemaphore imageAvailable; // indicates the image is acquired 
-        createSemaphore(imageAvailable);
-        VkSemaphore renderDone; // rendering to an image is done
-        createSemaphore(renderDone);
-        VkFence cmdBufferReady; // indicates command buffer is ready to be rerecorded
-        createFence(cmdBufferReady);
-        VkCommandPool graphicsCmdPool;
-        createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
-        VkCommandBuffer cmdBuffer;
-        createCommandBuffer(&cmdBuffer, 1, graphicsCmdPool);
-
         // wait until command buffer is ready to be rerecorded
-        vkWaitForFences(device, 1, &cmdBufferReady, VK_TRUE, ~0ull);
-        vkResetFences(device, 1, &cmdBufferReady);
+        vkWaitForFences(device, 1, &cmdBufferReady[currentFrame], VK_TRUE, ~0ull);
+        vkResetFences(device, 1, &cmdBufferReady[currentFrame]);
 
         uint32_t imageIndex;
         // get the next available image from the swapchain, store the index in imageIndex
         // and signal to imageAvailable once it is acquired
-        vkAcquireNextImageKHR(device, swapchain, ~0ull, imageAvailable, VK_NULL_HANDLE, &imageIndex);
+        vkAcquireNextImageKHR(device, swapchain, ~0ull, imageAvailable[currentFrame], VK_NULL_HANDLE, &imageIndex);
 
-        vkResetCommandBuffer(cmdBuffer, 0);
-        recordCmdBuffer(cmdBuffer, imageIndex);
+        vkResetCommandBuffer(cmdBuffer[currentFrame], 0);
+        recordCmdBuffer(cmdBuffer[currentFrame], imageIndex);
 
         VkSubmitInfo submitInfo{};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submitInfo.commandBufferCount = 1;
-        submitInfo.pCommandBuffers = &cmdBuffer;
+        submitInfo.pCommandBuffers = &cmdBuffer[currentFrame];
         submitInfo.waitSemaphoreCount = 1;
-        submitInfo.pWaitSemaphores = &imageAvailable;
+        submitInfo.pWaitSemaphores = &imageAvailable[currentFrame];
         std::vector<VkPipelineStageFlags> waitStages = {
             // stall operations at this stage and wait for the semaphore
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT 
         };
         submitInfo.pWaitDstStageMask = waitStages.data();
         submitInfo.signalSemaphoreCount = 1;
-        submitInfo.pSignalSemaphores = &renderDone;
-        VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, cmdBufferReady));
+        submitInfo.pSignalSemaphores = &renderDone[currentFrame];
+        VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, cmdBufferReady[currentFrame]));
 
-        destroyCommandPool(graphicsCmdPool); // command buffers are freed when command pool is destroyed
-        destroySemaphore(imageAvailable);
-        destroySemaphore(renderDone);
-        destroyFence(cmdBufferReady);
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = &swapchain;
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = &renderDone[currentFrame];
+        presentInfo.pImageIndices = &imageIndex;
+        presentInfo.pResults = nullptr;
+        vkQueuePresentKHR(presentQueue, &presentInfo);
+
+        currentFrame = (currentFrame+1) % MAX_FRAMES_IN_FLIGHT;
     }
+    vkDeviceWaitIdle(device);
+    destroyCommandPool(graphicsCmdPool); // command buffers are freed when command pool is destroyed
+    for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) destroySemaphore(imageAvailable[i]);
+    for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) destroySemaphore(renderDone[i]);
+    for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) destroyFence(cmdBufferReady[i]);
 }
 
 void Engine::createWindow() {
@@ -360,6 +374,20 @@ void Engine::createRenderpass() {
     attachmentReferences[0].attachment = 0; // index of the attachment in the attachment descriptions array
     attachmentReferences[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // layout that the image must have upon entering the subpass
 
+    // subpass dependency takes care of image layout transitions for each subpass
+    // renderpass by default has two implicit image layout transitiosn:
+    // at the beginning of the renderpass and at the end
+    // once renderpass starts, there is a chance image layout is still not available
+    VkSubpassDependency subpassDependency{};
+    subpassDependency.srcSubpass = VK_SUBPASS_EXTERNAL; // implicit subpass before or after the renderpass
+    subpassDependency.dstSubpass = 0; // this subpass
+    // what operations in srcSubpass must complete 
+    subpassDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT; // we wait for the swapchain to finish reading from the image
+    subpassDependency.srcAccessMask = 0; // wait for all operations within the stage
+    // what operations in dstSubpass wait
+    subpassDependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    subpassDependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; // wait before clearing the image
+
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = attachmentReferences.size();
@@ -372,6 +400,8 @@ void Engine::createRenderpass() {
     renderpassInfo.pAttachments = attachmentDescriptions.data();
     renderpassInfo.subpassCount = 1;
     renderpassInfo.pSubpasses = &subpass;
+    renderpassInfo.dependencyCount = 1;
+    renderpassInfo.pDependencies = &subpassDependency;
     VK_CHECK(vkCreateRenderPass(device, &renderpassInfo, nullptr, &renderpass));
 }
 void Engine::createFramebuffers() {
@@ -418,7 +448,7 @@ void Engine::createCommandBuffer(VkCommandBuffer* cmdBuffer, int count, VkComman
 void Engine::createSemaphore(VkSemaphore& sem) {
     VkSemaphoreCreateInfo semInfo{};
     semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    vkCreateSemaphore(device, &semInfo, nullptr, &sem);
+    VK_CHECK(vkCreateSemaphore(device, &semInfo, nullptr, &sem));
 }
 void Engine::destroySemaphore(VkSemaphore& sem) {
     vkDestroySemaphore(device, sem, nullptr);
@@ -427,7 +457,7 @@ void Engine::createFence(VkFence& fence) {
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // fence is created as already signaled
-    vkCreateFence(device, &fenceInfo, nullptr, &fence);
+    VK_CHECK(vkCreateFence(device, &fenceInfo, nullptr, &fence));
 }
 void Engine::destroyFence(VkFence& fence) {
     vkDestroyFence(device, fence, nullptr);

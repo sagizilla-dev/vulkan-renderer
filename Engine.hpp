@@ -56,6 +56,8 @@ private:
     void createFence(VkFence& fence);
     void destroyFence(VkFence& fence);
 
+    const int MAX_FRAMES_IN_FLIGHT = 3;
+    uint32_t currentFrame = 0;
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
         "VK_KHR_xcb_surface"
