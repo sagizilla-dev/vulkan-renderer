@@ -14,8 +14,11 @@ Engine::Engine() {
     createRenderpass();
     createGraphicsPipeline();
     createFramebuffers();
+    createVertexBuffer();
 }
 Engine::~Engine() {
+    vkDestroyBuffer(device, vertexBuffer, nullptr);
+    vkFreeMemory(device, vertexBufferMemory, nullptr);
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
     vkDestroyRenderPass(device, renderpass, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -173,6 +176,7 @@ void Engine::createDevice() {
 
     vkGetDeviceQueue(device, queueFamilies.graphicsFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(device, queueFamilies.presentFamily.value(), 0, &presentQueue);
+    vkGetDeviceQueue(device, queueFamilies.transferFamily.value(), 0, &transferQueue);
 }
 void Engine::createSwapchain() {
     SurfaceDetails surfaceDetails = getSurfaceDetails(pDevice);
@@ -276,11 +280,13 @@ void Engine::createGraphicsPipeline() {
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     // attribute description just describes data inside the vertex
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
-    vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+    auto attributes = Vertex::getAttributeDescription();
+    vertexInputInfo.vertexAttributeDescriptionCount = attributes.size();
+    vertexInputInfo.pVertexAttributeDescriptions = attributes.data();
     // binding is spacing between data and whether the data is per-vertex or per-instance
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.pVertexBindingDescriptions = nullptr;
+    auto bindings = Vertex::getBindingDescription();
+    vertexInputInfo.vertexBindingDescriptionCount = 1;
+    vertexInputInfo.pVertexBindingDescriptions = &bindings;
 
     VkPipelineInputAssemblyStateCreateInfo assemblyInfo{};
     assemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -463,10 +469,10 @@ void Engine::createSemaphore(VkSemaphore& sem) {
 void Engine::destroySemaphore(VkSemaphore& sem) {
     vkDestroySemaphore(device, sem, nullptr);
 }
-void Engine::createFence(VkFence& fence) {
+void Engine::createFence(VkFence& fence, VkFenceCreateFlags flags) {
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT; // fence is created as already signaled
+    fenceInfo.flags = flags;
     VK_CHECK(vkCreateFence(device, &fenceInfo, nullptr, &fence));
 }
 void Engine::destroyFence(VkFence& fence) {
@@ -488,6 +494,54 @@ void Engine::recreateSwapchain() {
     
     createSwapchain();
     createFramebuffers();
+}
+void Engine::createVertexBuffer() {
+    VkBuffer stageBuffer;
+    VkDeviceMemory stageBufferMemory;
+    VkDeviceSize vertexBufferSize = sizeof(vertices[0])*vertices.size();
+    createBuffer(stageBuffer, stageBufferMemory, vertexBufferSize, 
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+
+    // tie CPU memory to GPU memory and copy data
+    void* data;
+    vkMapMemory(device, stageBufferMemory, 0, vertexBufferSize, 0, &data);
+    memcpy(data, vertices.data(), sizeof(vertices[0])*vertices.size());
+    vkUnmapMemory(device, stageBufferMemory); // now the memory is transferred from CPU to GPU held by the buffer
+
+    createBuffer(vertexBuffer, vertexBufferMemory, vertexBufferSize,
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    copyBuffer(stageBuffer, vertexBuffer, vertexBufferSize);
+
+    vkDestroyBuffer(device, stageBuffer, nullptr);
+    vkFreeMemory(device, stageBufferMemory, nullptr);
+}
+void Engine::createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, 
+VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties) {
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = size;
+    bufferInfo.usage = usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE; // buffer is only used by graphics queue
+    VK_CHECK(vkCreateBuffer(device, &bufferInfo, nullptr, &buffer));
+
+    // VkMemoryRequirements defines the size of the buffer which may differ from VkBufferCreateInfo::size
+    // also includes alignment, which is the offset in bytes where the buffer begins in the allocated
+    // region of memory, depends on VkBufferCreateInfo::usage and VkBufferCreateInfo::flags
+    // also includes memoryTypeBits, which is the bit field of the memory types that are suitable for the buffer
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+    VkMemoryAllocateInfo memAllocInfo{};
+    memAllocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    memAllocInfo.allocationSize = memRequirements.size;
+    memAllocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, memoryProperties);
+    // allocate memory on the GPU for the buffer
+    VK_CHECK(vkAllocateMemory(device, &memAllocInfo, nullptr, &bufferMemory));
+    
+    // now buffer on the GPU holds the memory
+    vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
 
 bool Engine::checkInstanceExtensionsSupport() {
@@ -552,6 +606,9 @@ QueueFamilies Engine::findQueueFamilies(VkPhysicalDevice candidate) {
         if (family.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
             _queueFamilies.graphicsFamily = i;
         }
+        if (family.queueFlags & VK_QUEUE_TRANSFER_BIT) {
+            _queueFamilies.transferFamily = i;
+        }
         VkBool32 presentSupported = VK_FALSE;
         vkGetPhysicalDeviceSurfaceSupportKHR(candidate, i, surface, &presentSupported);
         if (presentSupported) {
@@ -609,6 +666,52 @@ VkExtent2D Engine::chooseSurfaceExtent(VkSurfaceCapabilitiesKHR capabilities) {
         return actualExtent;
     }
 }
+uint32_t Engine::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+    // VkPhysicalDeviceMemoryProperties has two arrays:
+    // memoryHeaps: distinct memory resources like VRAM or swap space in RAM
+    // memoryTypes: different types of memory within heaps
+    VkPhysicalDeviceMemoryProperties memProperties;
+    vkGetPhysicalDeviceMemoryProperties(pDevice, &memProperties);
+    for (uint32_t i = 0; i<memProperties.memoryTypeCount; i++) {
+        // typeFilter consists of flags set for each memory type that is suitable for the buffer
+        // order of flags/memory types in typeFilter corresponds to memoryTypes in VkPhysicalDeviceMemoryProperties 
+        // VkMemoryPropertyFlags is the set of flags that define how the memory can be used, i.e memory is host visible or device local
+        if ((typeFilter & (1<<i)) && (memProperties.memoryTypes[i].propertyFlags & properties)==properties) {
+            return i;
+        }
+    }
+    throw std::runtime_error("Cannot find a suitable memory type");
+}
+void Engine::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+    VkCommandPool cmdPool{};
+    createCommandPool(cmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
+    VkCommandBuffer cmdBuffer{};
+    createCommandBuffer(&cmdBuffer, 1, cmdPool);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmdBuffer, &beginInfo);
+    {
+        VkBufferCopy copyRegion{};
+        copyRegion.size = size;
+        copyRegion.srcOffset = 0;
+        copyRegion.dstOffset = 0;
+        vkCmdCopyBuffer(cmdBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+    }
+    vkEndCommandBuffer(cmdBuffer);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmdBuffer;
+    VkFence fence{};
+    createFence(fence, 0);
+    vkQueueSubmit(transferQueue, 1, &submitInfo, fence);
+    vkWaitForFences(device, 1, &fence, VK_TRUE, ~0ull);
+    destroyFence(fence);
+    vkDestroyCommandPool(device, cmdPool, nullptr);
+}
 
 void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
     VkCommandBufferBeginInfo beginInfo{};
@@ -635,6 +738,9 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
         {
             vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
+            VkDeviceSize offset = {0};
+            vkCmdBindVertexBuffers(cmdBuffer, 0, 1, &vertexBuffer, &offset);
+
             VkViewport viewport{};
             viewport.x = 0.0f;
             viewport.y = 0.0f;
@@ -648,7 +754,7 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             scissor.offset = {0, 0};
             vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
 
-            vkCmdDraw(cmdBuffer, 3, 1, 0, 0);
+            vkCmdDraw(cmdBuffer, vertices.size(), 1, 0, 0);
         }
         vkCmdEndRenderPass(cmdBuffer);
     }
