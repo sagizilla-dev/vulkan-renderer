@@ -40,9 +40,13 @@ struct Vertex {
     }
 };
 const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}}
+    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}}
+};
+const std::vector<uint32_t> indices = {
+    0, 1, 2, 2, 3, 0
 };
 
 class Engine {
@@ -71,6 +75,8 @@ private:
     std::vector<VkFramebuffer> framebuffers;
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
+    VkBuffer indexBuffer;
+    VkDeviceMemory indexBufferMemory;
     VkCommandPool graphicsCmdPool;
     VkCommandPool transferCmdPool;
 
@@ -95,6 +101,7 @@ private:
     void cleanupSwapchain();
     void recreateSwapchain();
     void createVertexBuffer();
+    void createIndexBuffer();
     void createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
 
     const int MAX_FRAMES_IN_FLIGHT = 3;

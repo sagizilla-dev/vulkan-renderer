@@ -17,10 +17,13 @@ Engine::Engine() {
     createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
     createCommandPool(transferCmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
     createVertexBuffer();
+    createIndexBuffer();
 }
 Engine::~Engine() {
     vkDestroyCommandPool(device, transferCmdPool, nullptr);
     destroyCommandPool(graphicsCmdPool); // command buffers are freed when command pool is destroyed
+    vkDestroyBuffer(device, indexBuffer, nullptr);
+    vkFreeMemory(device, indexBufferMemory, nullptr);
     vkDestroyBuffer(device, vertexBuffer, nullptr);
     vkFreeMemory(device, vertexBufferMemory, nullptr);
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
@@ -291,7 +294,9 @@ void Engine::createGraphicsPipeline() {
 
     VkPipelineInputAssemblyStateCreateInfo assemblyInfo{};
     assemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    assemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    // _STRIP topology forms triangles by using one new vertex and two previous vertices
+    // useful to decrease the size of the index buffer
+    assemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     assemblyInfo.primitiveRestartEnable = VK_FALSE; // if set to true, then it is possible to break up lines and triangles in _STRIP topology
 
     // this will be defined inside the render loop
@@ -519,6 +524,29 @@ void Engine::createVertexBuffer() {
     vkDestroyBuffer(device, stageBuffer, nullptr);
     vkFreeMemory(device, stageBufferMemory, nullptr);
 }
+void Engine::createIndexBuffer() {
+    VkBuffer stageBuffer;
+    VkDeviceMemory stageBufferMemory;
+    VkDeviceSize indexBufferSize = sizeof(indices[0])*indices.size();
+    createBuffer(stageBuffer, stageBufferMemory, indexBufferSize, 
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+
+    // tie CPU memory to GPU memory and copy data
+    void* data;
+    vkMapMemory(device, stageBufferMemory, 0, indexBufferSize, 0, &data);
+    memcpy(data, indices.data(), sizeof(indices[0])*indices.size());
+    vkUnmapMemory(device, stageBufferMemory); // now the memory is transferred from CPU to GPU held by the buffer
+
+    createBuffer(indexBuffer, indexBufferMemory, indexBufferSize,
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    copyBuffer(stageBuffer, indexBuffer, indexBufferSize);
+
+    vkDestroyBuffer(device, stageBuffer, nullptr);
+    vkFreeMemory(device, stageBufferMemory, nullptr);
+}
 void Engine::createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, 
 VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties) {
     VkBufferCreateInfo bufferInfo{};
@@ -737,7 +765,9 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
             VkDeviceSize offset = {0};
+            // this function is used to bind vertex buffer to bindings defined in graphics pipeline creation
             vkCmdBindVertexBuffers(cmdBuffer, 0, 1, &vertexBuffer, &offset);
+            vkCmdBindIndexBuffer(cmdBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
             VkViewport viewport{};
             viewport.x = 0.0f;
@@ -752,7 +782,8 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             scissor.offset = {0, 0};
             vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
 
-            vkCmdDraw(cmdBuffer, vertices.size(), 1, 0, 0);
+            // vkCmdDraw(cmdBuffer, vertices.size(), 1, 0, 0);
+            vkCmdDrawIndexed(cmdBuffer, indices.size(), 1, 0, 0, 0);
         }
         vkCmdEndRenderPass(cmdBuffer);
     }
