@@ -13,13 +13,15 @@ Engine::Engine() {
     createSwapchain();
     createRenderpass();
     createFramebuffers();
+    createUniformBuffers();
     createDescriptorSetLayout();
+    createDescriptorPool();
+    createDescriptorSets();
     createGraphicsPipeline();
     createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
     createCommandPool(transferCmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
     createVertexBuffer();
     createIndexBuffer();
-    createUniformBuffer();
 }
 Engine::~Engine() {
     for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
@@ -33,6 +35,7 @@ Engine::~Engine() {
     vkDestroyCommandPool(device, transferCmdPool, nullptr);
     vkDestroyCommandPool(device, graphicsCmdPool, nullptr); // command buffers are freed when command pool is destroyed
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
+    vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     vkDestroyRenderPass(device, renderpass, nullptr);
@@ -278,6 +281,50 @@ void Engine::createDescriptorSetLayout() {
     descriptorSetLayoutInfo.pBindings = layoutBindings.data();
     VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &descriptorSetLayout));
 }
+void Engine::createDescriptorPool() {
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    // number of descriptors of a specific time
+    poolSize.descriptorCount = MAX_FRAMES_IN_FLIGHT;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    // total number of descriptor sets that are to be allocated
+    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+    VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
+}
+void Engine::createDescriptorSets() {
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
+    descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.pSetLayouts = layouts.data();
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocInfo.descriptorPool = descriptorPool;
+    // allocate descriptor sets, each created based on the descriptor set layout
+    VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()));
+
+    // bind the actual data to descriptor sets
+    for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = uniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(MVP);
+
+        VkWriteDescriptorSet writeDescriptor{};
+        writeDescriptor.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeDescriptor.pBufferInfo = &bufferInfo;
+        writeDescriptor.pImageInfo = nullptr;
+        writeDescriptor.descriptorCount = 1; // in case the descriptor is an array
+        writeDescriptor.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writeDescriptor.dstSet = descriptorSets[i];
+        writeDescriptor.dstBinding = 0;
+        writeDescriptor.dstArrayElement = 0;
+        vkUpdateDescriptorSets(device, 1, &writeDescriptor, 0, nullptr);
+    }
+}
 void Engine::createGraphicsPipeline() {
     auto vertCode = readFile("../shader.vert.spv");
     auto fragCode = readFile("../shader.frag.spv");
@@ -340,7 +387,7 @@ void Engine::createGraphicsPipeline() {
     rasterInfo.polygonMode = VK_POLYGON_MODE_FILL;
     rasterInfo.lineWidth = 1.0f;
     rasterInfo.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterInfo.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    rasterInfo.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterInfo.depthBiasEnable = VK_FALSE;
 
     VkPipelineMultisampleStateCreateInfo msaaInfo{};
@@ -597,7 +644,7 @@ VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties) {
     // now buffer on the GPU holds the memory
     vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
-void Engine::createUniformBuffer() {
+void Engine::createUniformBuffers() {
     VkDeviceSize size = sizeof(MVP);
     uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
     uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
@@ -813,6 +860,8 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
         vkCmdBeginRenderPass(cmdBuffer, &renderpassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
         {
             vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+            vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
             VkDeviceSize offset = {0};
             // this function is used to bind vertex buffer to bindings defined in graphics pipeline creation

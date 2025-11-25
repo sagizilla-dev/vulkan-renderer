@@ -50,8 +50,8 @@ const std::vector<uint32_t> indices = {
 };
 
 struct MVP {
-    glm::mat4 view;
     glm::mat4 model;
+    glm::mat4 view;
     glm::mat4 proj;
 };
 
@@ -77,6 +77,8 @@ private:
     std::vector<VkImageView> swapchainImageViews;
     VkPipeline graphicsPipeline;
     VkDescriptorSetLayout descriptorSetLayout;
+    VkDescriptorPool descriptorPool;
+    std::vector<VkDescriptorSet> descriptorSets;
     VkPipelineLayout pipelineLayout;
     VkRenderPass renderpass;
     std::vector<VkFramebuffer> framebuffers;
@@ -97,6 +99,8 @@ private:
     void createSwapchain();
     void createImageView(VkFormat format, VkImage& image, VkImageAspectFlags aspectMask, VkImageView& imageView);
     void createDescriptorSetLayout();
+    void createDescriptorPool();
+    void createDescriptorSets();
     void createGraphicsPipeline();
     void createShaderModule(VkShaderModule& shaderModule, const std::vector<char>& code);
     void createRenderpass();
@@ -113,7 +117,7 @@ private:
     void createVertexBuffer();
     void createIndexBuffer();
     void createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
-    void createUniformBuffer();
+    void createUniformBuffers();
 
     const int MAX_FRAMES_IN_FLIGHT = 4;
     uint32_t currentFrame = 0;
