@@ -19,8 +19,13 @@ Engine::Engine() {
     createCommandPool(transferCmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
     createVertexBuffer();
     createIndexBuffer();
+    createUniformBuffer();
 }
 Engine::~Engine() {
+    for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroyBuffer(device, uniformBuffers[i], nullptr);
+        vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+    }
     vkDestroyBuffer(device, indexBuffer, nullptr);
     vkFreeMemory(device, indexBufferMemory, nullptr);
     vkDestroyBuffer(device, vertexBuffer, nullptr);
@@ -74,6 +79,7 @@ void Engine::run() {
         vkResetFences(device, 1, &cmdBufferReady[currentFrame]);
 
         vkResetCommandBuffer(cmdBuffer[currentFrame], 0);
+        updateMVP();
         recordCmdBuffer(cmdBuffer[currentFrame], imageIndex);
 
         VkSubmitInfo submitInfo{};
@@ -591,6 +597,18 @@ VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties) {
     // now buffer on the GPU holds the memory
     vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
+void Engine::createUniformBuffer() {
+    VkDeviceSize size = sizeof(MVP);
+    uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
+        createBuffer(uniformBuffers[i], uniformBuffersMemory[i], size, 
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        // persistent mapping
+        vkMapMemory(device, uniformBuffersMemory[i], 0, size, 0, &uniformBuffersMapped[i]);
+    }
+}
 
 bool Engine::checkInstanceExtensionsSupport() {
     uint32_t count;
@@ -756,6 +774,19 @@ void Engine::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize siz
     vkQueueSubmit(transferQueue, 1, &submitInfo, fence);
     vkWaitForFences(device, 1, &fence, VK_TRUE, ~0ull);
     destroyFence(fence);
+}
+void Engine::updateMVP() {
+    static auto startTime = std::chrono::high_resolution_clock::now();
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+    MVP mvp{};
+    mvp.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    mvp.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 0.1f, 10.0f);
+    mvp.proj[1][1] *= -1;
+
+    memcpy(uniformBuffersMapped[currentFrame], &mvp, sizeof(MVP));
 }
 
 void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
