@@ -49,6 +49,12 @@ const std::vector<uint32_t> indices = {
     0, 1, 2, 2, 3, 0
 };
 
+struct MVP {
+    glm::mat4 view;
+    glm::mat4 model;
+    glm::mat4 proj;
+};
+
 class Engine {
 public:
     Engine();
@@ -70,6 +76,7 @@ private:
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
     VkPipeline graphicsPipeline;
+    VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout pipelineLayout;
     VkRenderPass renderpass;
     std::vector<VkFramebuffer> framebuffers;
@@ -86,6 +93,7 @@ private:
     void createDevice();
     void createSwapchain();
     void createImageView(VkFormat format, VkImage& image, VkImageAspectFlags aspectMask, VkImageView& imageView);
+    void createDescriptorSetLayout();
     void createGraphicsPipeline();
     void createShaderModule(VkShaderModule& shaderModule, const std::vector<char>& code);
     void createRenderpass();

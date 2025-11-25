@@ -13,6 +13,7 @@ Engine::Engine() {
     createSwapchain();
     createRenderpass();
     createFramebuffers();
+    createDescriptorSetLayout();
     createGraphicsPipeline();
     createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
     createCommandPool(transferCmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
@@ -27,6 +28,7 @@ Engine::~Engine() {
     vkDestroyCommandPool(device, transferCmdPool, nullptr);
     vkDestroyCommandPool(device, graphicsCmdPool, nullptr); // command buffers are freed when command pool is destroyed
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
+    vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     vkDestroyRenderPass(device, renderpass, nullptr);
     cleanupSwapchain();
@@ -254,6 +256,22 @@ void Engine::createImageView(VkFormat format, VkImage& image, VkImageAspectFlags
     imageViewInfo.subresourceRange.levelCount = 1;
     VK_CHECK(vkCreateImageView(device, &imageViewInfo, nullptr, &imageView));
 }
+void Engine::createDescriptorSetLayout() {
+    // this function creates descriptor set layout, which specifies what type of resources
+    // are to be passed into the shaders, same way render pass defines what type of attachments to expect
+    // descriptor sets define data itself, same way framebuffers define exact attachments
+    std::vector<VkDescriptorSetLayoutBinding> layoutBindings(1);
+    layoutBindings[0].binding = 0; // referenced in the shader as layout(binding = X)
+    layoutBindings[0].descriptorCount = 1; // descriptor can be an array
+    layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layoutBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+    VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
+    descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    descriptorSetLayoutInfo.bindingCount = layoutBindings.size();
+    descriptorSetLayoutInfo.pBindings = layoutBindings.data();
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &descriptorSetLayout));
+}
 void Engine::createGraphicsPipeline() {
     auto vertCode = readFile("../shader.vert.spv");
     auto fragCode = readFile("../shader.frag.spv");
@@ -345,8 +363,8 @@ void Engine::createGraphicsPipeline() {
     // this struct is used to pass uniforms and push constants into shaders
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 0;
-    pipelineLayoutInfo.pSetLayouts = nullptr;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
     pipelineLayoutInfo.pushConstantRangeCount = 0;
     pipelineLayoutInfo.pPushConstantRanges = nullptr;
     VK_CHECK(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout));
