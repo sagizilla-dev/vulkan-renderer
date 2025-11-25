@@ -91,7 +91,6 @@ private:
     void createRenderpass();
     void createFramebuffers();
     void createCommandPool(VkCommandPool& cmdPool, VkCommandPoolCreateFlags flags, uint32_t queueFamily);
-    void destroyCommandPool(VkCommandPool& cmdPool);
     void createCommandBuffer(VkCommandBuffer* cmdBuffer, int count, VkCommandPool& cmdPool);
     void createSemaphore(VkSemaphore& sem);
     void destroySemaphore(VkSemaphore& sem);
@@ -104,7 +103,7 @@ private:
     void createIndexBuffer();
     void createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
 
-    const int MAX_FRAMES_IN_FLIGHT = 3;
+    const int MAX_FRAMES_IN_FLIGHT = 4;
     uint32_t currentFrame = 0;
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",

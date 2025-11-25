@@ -12,26 +12,26 @@ Engine::Engine() {
     createDevice();
     createSwapchain();
     createRenderpass();
-    createGraphicsPipeline();
     createFramebuffers();
+    createGraphicsPipeline();
     createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
     createCommandPool(transferCmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
     createVertexBuffer();
     createIndexBuffer();
 }
 Engine::~Engine() {
-    vkDestroyCommandPool(device, transferCmdPool, nullptr);
-    destroyCommandPool(graphicsCmdPool); // command buffers are freed when command pool is destroyed
     vkDestroyBuffer(device, indexBuffer, nullptr);
     vkFreeMemory(device, indexBufferMemory, nullptr);
     vkDestroyBuffer(device, vertexBuffer, nullptr);
     vkFreeMemory(device, vertexBufferMemory, nullptr);
+    vkDestroyCommandPool(device, transferCmdPool, nullptr);
+    vkDestroyCommandPool(device, graphicsCmdPool, nullptr); // command buffers are freed when command pool is destroyed
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
-    vkDestroyRenderPass(device, renderpass, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+    vkDestroyRenderPass(device, renderpass, nullptr);
     cleanupSwapchain();
-    vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyDevice(device, nullptr);
+    vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyInstance(instance, nullptr);
     glfwDestroyWindow(window);
     glfwTerminate();
@@ -39,9 +39,10 @@ Engine::~Engine() {
 void Engine::run() {
     // instead of having 1 frame in flight and making CPU wait for GPU to finish work, 
     // we keep pumping work from CPU to GPU by having multiple frames in flight
+    // having too many frames in flight introduces big input latency though
     std::vector<VkSemaphore> imageAvailable(MAX_FRAMES_IN_FLIGHT); // indicates the image is acquired 
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) createSemaphore(imageAvailable[i]);
-    std::vector<VkSemaphore> renderDone(MAX_FRAMES_IN_FLIGHT); // rendering to an image is done
+    std::vector<VkSemaphore> renderDone(MAX_FRAMES_IN_FLIGHT); // indicates rendering to an image is done
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) createSemaphore(renderDone[i]);
     std::vector<VkFence> cmdBufferReady(MAX_FRAMES_IN_FLIGHT); // indicates command buffer is ready to be rerecorded
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) createFence(cmdBufferReady[i]);
@@ -54,20 +55,20 @@ void Engine::run() {
         vkWaitForFences(device, 1, &cmdBufferReady[currentFrame], VK_TRUE, ~0ull);
         
         uint32_t imageIndex;
-        // get the next available image from the swapchain, store the index in imageIndex
+        // get the next available image from the swapchain, store the image index in imageIndex
         // and signal to imageAvailable once it is acquired
         VkResult res = vkAcquireNextImageKHR(device, swapchain, ~0ull, imageAvailable[currentFrame], VK_NULL_HANDLE, &imageIndex);
-        // VK_SUBOPTIMAL_KHR means the swapchain can still be used, but the surface properties are no longer matched exactly
         if (res==VK_ERROR_OUT_OF_DATE_KHR) {
             // take this branch if the swapchain is incompatible with the surface
             recreateSwapchain();
             continue;
         } else if (res!=VK_SUCCESS && res!=VK_SUBOPTIMAL_KHR) {
+            // VK_SUBOPTIMAL_KHR means the swapchain can still be used, but the surface properties are no longer matched exactly
             throw std::runtime_error("Couldn't acquire next image");
         }
-        // reset the fence only after acquiring the next image
-        // it is important to avoid deadlock
-        // otherwise, if swapchain is recreated, fence is reset but we are waiting on it
+
+        // reset the fence only after acquiring the next image - it is important to avoid deadlock 
+        // otherwise, if swapchain is recreated, fence is reset but we are still waiting on it
         vkResetFences(device, 1, &cmdBufferReady[currentFrame]);
 
         vkResetCommandBuffer(cmdBuffer[currentFrame], 0);
@@ -80,7 +81,7 @@ void Engine::run() {
         submitInfo.waitSemaphoreCount = 1;
         submitInfo.pWaitSemaphores = &imageAvailable[currentFrame];
         std::vector<VkPipelineStageFlags> waitStages = {
-            // stall operations at this stage and wait for the semaphore
+            // stall operations at this stage to wait for the semaphore
             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT 
         };
         submitInfo.pWaitDstStageMask = waitStages.data();
@@ -205,6 +206,7 @@ void Engine::createSwapchain() {
     swapchainInfo.imageFormat = surfaceFormat.format;
     std::vector<uint32_t> queueFamilyIndices = {queueFamilies.graphicsFamily.value(), queueFamilies.presentFamily.value()};
     if (queueFamilies.graphicsFamily.value() != queueFamilies.presentFamily.value()) {
+        // swapchain images are used by two different queues
         swapchainInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
         swapchainInfo.queueFamilyIndexCount = 2;
         swapchainInfo.pQueueFamilyIndices = queueFamilyIndices.data();
@@ -239,6 +241,7 @@ void Engine::createImageView(VkFormat format, VkImage& image, VkImageAspectFlags
     imageViewInfo.image = image;
     imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     imageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    // swizzling of color components
     imageViewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
     imageViewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
     imageViewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -280,7 +283,7 @@ void Engine::createGraphicsPipeline() {
     dynamicStateInfo.dynamicStateCount = dynamicStates.size();
     dynamicStateInfo.pDynamicStates = dynamicStates.data();
 
-    // this fixed function describes what to expect as inputs
+    // this fixed function describes what to expect as inputs to vertex shaders
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     // attribute description just describes data inside the vertex
@@ -294,12 +297,12 @@ void Engine::createGraphicsPipeline() {
 
     VkPipelineInputAssemblyStateCreateInfo assemblyInfo{};
     assemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    // _STRIP topology forms triangles by using one new vertex and two previous vertices
+    // _STRIP topology forms triangles by using one new vertex and two previous vertices in the buffer
     // useful to decrease the size of the index buffer
     assemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     assemblyInfo.primitiveRestartEnable = VK_FALSE; // if set to true, then it is possible to break up lines and triangles in _STRIP topology
 
-    // this will be defined inside the render loop
+    // this will be defined inside the render loop, i.e as dynamic state
     VkPipelineViewportStateCreateInfo viewportInfo{};
     viewportInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewportInfo.scissorCount = 1;
@@ -325,7 +328,7 @@ void Engine::createGraphicsPipeline() {
     depthStencilInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencilInfo.depthTestEnable = VK_FALSE;
     depthStencilInfo.minDepthBounds = 0.0f;
-    depthStencilInfo.minDepthBounds = 1.0f;
+    depthStencilInfo.maxDepthBounds = 1.0f;
     depthStencilInfo.stencilTestEnable = VK_FALSE;
     
     // this struct defines color blending settings per framebuffer
@@ -382,6 +385,7 @@ void Engine::createShaderModule(VkShaderModule& shaderModule, const std::vector<
 void Engine::createRenderpass() {
     // all attachments, i.e color, depth, etc, are passed from the framebuffer in
     // the same order as they were defined during framebuffer creation
+    // so this array must have the same order
     std::vector<VkAttachmentDescription> attachmentDescriptions(1);
     attachmentDescriptions[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     attachmentDescriptions[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
@@ -392,6 +396,7 @@ void Engine::createRenderpass() {
     attachmentDescriptions[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachmentDescriptions[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 
+    // each subpass has an array of attachment references
     std::vector<VkAttachmentReference> attachmentReferences(1);
     attachmentReferences[0].attachment = 0; // index of the attachment in the attachment descriptions array
     attachmentReferences[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // layout that the image must have upon entering the subpass
@@ -399,10 +404,10 @@ void Engine::createRenderpass() {
     // subpass dependency takes care of image layout transitions for each subpass
     // renderpass by default has two implicit image layout transitiosn:
     // at the beginning of the renderpass and at the end
-    // once renderpass starts, there is a chance image layout is still not available
+    // once renderpass starts, there is a chance swapchain image is actually still not available
     VkSubpassDependency subpassDependency{};
     subpassDependency.srcSubpass = VK_SUBPASS_EXTERNAL; // implicit subpass before or after the renderpass
-    subpassDependency.dstSubpass = 0; // this subpass
+    subpassDependency.dstSubpass = 0; // current subpass
     // what operations in srcSubpass must complete 
     subpassDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT; // we wait for the swapchain to finish reading from the image
     subpassDependency.srcAccessMask = 0; // wait for all operations within the stage
@@ -413,7 +418,7 @@ void Engine::createRenderpass() {
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = attachmentReferences.size();
-    // the index of the attachment in this array is referenced from the fragment shader
+    // the index of the attachment in this array is referenced in the fragment shader as layout(location=X) out
     subpass.pColorAttachments = attachmentReferences.data();
 
     VkRenderPassCreateInfo renderpassInfo{};
@@ -453,9 +458,6 @@ void Engine::createCommandPool(VkCommandPool& cmdPool, VkCommandPoolCreateFlags 
     poolInfo.flags = flags;
     poolInfo.queueFamilyIndex = queueFamily;
     VK_CHECK(vkCreateCommandPool(device, &poolInfo, nullptr, &cmdPool));
-}
-void Engine::destroyCommandPool(VkCommandPool& cmdPool) {
-    vkDestroyCommandPool(device, cmdPool, nullptr);
 }
 void Engine::createCommandBuffer(VkCommandBuffer* cmdBuffer, int count, VkCommandPool& cmdPool) {
     VkCommandBufferAllocateInfo allocInfo{};
@@ -513,7 +515,7 @@ void Engine::createVertexBuffer() {
     void* data;
     vkMapMemory(device, stageBufferMemory, 0, vertexBufferSize, 0, &data);
     memcpy(data, vertices.data(), sizeof(vertices[0])*vertices.size());
-    vkUnmapMemory(device, stageBufferMemory); // now the memory is transferred from CPU to GPU held by the buffer
+    vkUnmapMemory(device, stageBufferMemory); // now the memory is transferred from CPU to GPU memory held by the buffer
 
     createBuffer(vertexBuffer, vertexBufferMemory, vertexBufferSize,
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
@@ -532,11 +534,10 @@ void Engine::createIndexBuffer() {
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
-    // tie CPU memory to GPU memory and copy data
     void* data;
     vkMapMemory(device, stageBufferMemory, 0, indexBufferSize, 0, &data);
     memcpy(data, indices.data(), sizeof(indices[0])*indices.size());
-    vkUnmapMemory(device, stageBufferMemory); // now the memory is transferred from CPU to GPU held by the buffer
+    vkUnmapMemory(device, stageBufferMemory);
 
     createBuffer(indexBuffer, indexBufferMemory, indexBufferSize,
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
@@ -743,10 +744,10 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT means the command buffer will be rerecorded right after executing it once
-    // VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT means the command buffer is secondary and will be within a single render pass
+    // VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT means the command buffer is secondary and will be executing within a single render pass
     // VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT means the command buffer can be resubmitted while it is already pending
     beginInfo.flags = 0;
-    beginInfo.pInheritanceInfo = nullptr; // only relevant for secondary buffer
+    beginInfo.pInheritanceInfo = nullptr;
     VK_CHECK(vkBeginCommandBuffer(cmdBuffer, &beginInfo));
     {
         VkRenderPassBeginInfo renderpassBeginInfo{};
