@@ -24,8 +24,11 @@ Engine::Engine() {
     createVertexBuffer();
     createIndexBuffer();
     createTextureImage();
+    createTextureSampler();
 }
 Engine::~Engine() {
+    vkDestroySampler(device, textureSampler, nullptr);
+    vkDestroyImageView(device, textureImageView, nullptr);
     vkDestroyImage(device, textureImage, nullptr);
     vkFreeMemory(device, textureImageMemory, nullptr);
     for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
@@ -177,6 +180,7 @@ void Engine::createDevice() {
     deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
     VkPhysicalDeviceFeatures features{};
     features.geometryShader = VK_TRUE;
+    features.samplerAnisotropy = VK_TRUE;
     deviceInfo.pEnabledFeatures = &features;
     
     std::set<uint32_t> uniqueQueueFamilies = {queueFamilies.graphicsFamily.value(), queueFamilies.presentFamily.value()};
@@ -685,6 +689,8 @@ void Engine::createTextureImage() {
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+    createImageView(VK_FORMAT_R8G8B8A8_SRGB, textureImage, VK_IMAGE_ASPECT_COLOR_BIT, textureImageView);
 }
 void Engine::createImage(VkImage& image, VkDeviceMemory& imageMemory, int texWidth, int texHeight,
 VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags memoryProperties) {
@@ -717,6 +723,29 @@ VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryProperty
     VK_CHECK(vkAllocateMemory(device, &memAllocInfo, nullptr, &imageMemory));
 
     vkBindImageMemory(device, image, imageMemory, 0);
+}
+void Engine::createTextureSampler() {
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR; // how to interpolate texels that are magnified (oversampling) 
+    samplerInfo.minFilter = VK_FILTER_LINEAR; // how to interpolate texels that are minified (undersampling)
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.anisotropyEnable = VK_TRUE; // to solve undersampling issue
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(pDevice, &props);
+    samplerInfo.maxAnisotropy = props.limits.maxSamplerAnisotropy;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    // if set to VK_TRUE, coordinates are within [0, texWidth) and [0, texHeight)
+    samplerInfo.unnormalizedCoordinates = VK_FALSE; // use [0, 1)
+    samplerInfo.compareEnable = VK_FALSE; // if set to VK_TRUE, compare texel to a value first and use the result in filtering operations
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+    VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler));
 }
 
 bool Engine::checkInstanceExtensionsSupport() {
@@ -760,7 +789,7 @@ bool Engine::isDeviceSuitable(VkPhysicalDevice candidate) {
 
     SurfaceDetails surfaceDetails = getSurfaceDetails(candidate);
 
-    return features.geometryShader == VK_TRUE &&
+    return features.geometryShader == VK_TRUE && features.samplerAnisotropy == VK_TRUE && 
         props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU &&
         checkDeviceExtensionsSupport(candidate) &&
         _queueFamilies.isComplete() &&

@@ -93,6 +93,8 @@ private:
     std::vector<void*> uniformBuffersMapped;
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
+    VkImageView textureImageView;
+    VkSampler textureSampler;
 
     void createWindow();
     void createInstance();
@@ -123,6 +125,7 @@ private:
     void createTextureImage();
     void createImage(VkImage& image, VkDeviceMemory& imageMemory, int texWidth, int texHeight,
         VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
+    void createTextureSampler();
 
     const int MAX_FRAMES_IN_FLIGHT = 4;
     uint32_t currentFrame = 0;
