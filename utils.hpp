@@ -19,6 +19,8 @@
 
 #include <vulkan/vulkan.hpp>
 
+#include "stb_image.h"
+
 inline const char* vkResultToString(VkResult r) {
     switch (r) {
         case VK_SUCCESS: return "VK_SUCCESS";

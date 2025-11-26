@@ -91,6 +91,8 @@ private:
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
+    VkImage textureImage;
+    VkDeviceMemory textureImageMemory;
 
     void createWindow();
     void createInstance();
@@ -118,6 +120,9 @@ private:
     void createIndexBuffer();
     void createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
     void createUniformBuffers();
+    void createTextureImage();
+    void createImage(VkImage& image, VkDeviceMemory& imageMemory, int texWidth, int texHeight,
+        VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
 
     const int MAX_FRAMES_IN_FLIGHT = 4;
     uint32_t currentFrame = 0;
@@ -143,7 +148,11 @@ private:
     VkExtent2D chooseSurfaceExtent(VkSurfaceCapabilitiesKHR capabilities);
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+    void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+    VkCommandBuffer beginRecording(VkCommandPool& cmdPool);
+    void stopRecording(VkCommandBuffer& cmdBuffer, VkCommandPool& cmdPool);
     void updateMVP();
 
     void recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex);
+    void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
 };
