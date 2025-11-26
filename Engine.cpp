@@ -14,17 +14,17 @@ Engine::Engine() {
     createSwapchain();
     createRenderpass();
     createFramebuffers();
+    createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
+    createCommandPool(transferCmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
     createUniformBuffers();
+    createTextureImage();
+    createTextureSampler();
     createDescriptorSetLayout();
     createDescriptorPool();
     createDescriptorSets();
     createGraphicsPipeline();
-    createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
-    createCommandPool(transferCmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
     createVertexBuffer();
     createIndexBuffer();
-    createTextureImage();
-    createTextureSampler();
 }
 Engine::~Engine() {
     vkDestroySampler(device, textureSampler, nullptr);
@@ -277,11 +277,15 @@ void Engine::createDescriptorSetLayout() {
     // this function creates descriptor set layout, which specifies what type of resources
     // are to be passed into the shaders, same way render pass defines what type of attachments to expect
     // descriptor sets define data itself, same way framebuffers define exact attachments
-    std::vector<VkDescriptorSetLayoutBinding> layoutBindings(1);
+    std::vector<VkDescriptorSetLayoutBinding> layoutBindings(2);
     layoutBindings[0].binding = 0; // referenced in the shader as layout(binding = X)
     layoutBindings[0].descriptorCount = 1; // descriptor can be an array
     layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     layoutBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    layoutBindings[1].binding = 1;
+    layoutBindings[1].descriptorCount = 1;
+    layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    layoutBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
     descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -290,15 +294,17 @@ void Engine::createDescriptorSetLayout() {
     VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &descriptorSetLayout));
 }
 void Engine::createDescriptorPool() {
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    std::vector<VkDescriptorPoolSize> poolSizes(2);
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     // number of descriptors of a specific time
-    poolSize.descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.poolSizeCount = poolSizes.size();
+    poolInfo.pPoolSizes = poolSizes.data();
     // total number of descriptor sets that are to be allocated
     poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
     VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
@@ -320,17 +326,30 @@ void Engine::createDescriptorSets() {
         bufferInfo.buffer = uniformBuffers[i];
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(MVP);
+        
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfo.imageView = textureImageView;
+        imageInfo.sampler = textureSampler;
 
-        VkWriteDescriptorSet writeDescriptor{};
-        writeDescriptor.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeDescriptor.pBufferInfo = &bufferInfo;
-        writeDescriptor.pImageInfo = nullptr;
-        writeDescriptor.descriptorCount = 1; // in case the descriptor is an array
-        writeDescriptor.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writeDescriptor.dstSet = descriptorSets[i];
-        writeDescriptor.dstBinding = 0;
-        writeDescriptor.dstArrayElement = 0;
-        vkUpdateDescriptorSets(device, 1, &writeDescriptor, 0, nullptr);
+        std::vector<VkWriteDescriptorSet> writeDescriptors(2);
+        writeDescriptors[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeDescriptors[0].pBufferInfo = &bufferInfo;
+        writeDescriptors[0].descriptorCount = 1; // in case the descriptor is an array
+        writeDescriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writeDescriptors[0].dstSet = descriptorSets[i];
+        writeDescriptors[0].dstBinding = 0;
+        writeDescriptors[0].dstArrayElement = 0;
+
+        writeDescriptors[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeDescriptors[1].pImageInfo = &imageInfo;
+        writeDescriptors[1].descriptorCount = 1; // in case the descriptor is an array
+        writeDescriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writeDescriptors[1].dstSet = descriptorSets[i];
+        writeDescriptors[1].dstBinding = 1;
+        writeDescriptors[1].dstArrayElement = 0;
+
+        vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
     }
 }
 void Engine::createGraphicsPipeline() {

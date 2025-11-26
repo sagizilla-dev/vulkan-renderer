@@ -18,6 +18,7 @@ struct SurfaceDetails {
 struct Vertex {
     glm::vec3 position;
     glm::vec3 color;
+    glm::vec2 uv;
     // binding descriptions specify at which rate to load data
     static VkVertexInputBindingDescription getBindingDescription() {
         VkVertexInputBindingDescription binding{};
@@ -26,25 +27,30 @@ struct Vertex {
         binding.stride = sizeof(Vertex);
         return binding;
     }
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescription() {
-        std::array<VkVertexInputAttributeDescription, 2> attributes{};
+    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescription() {
+        std::array<VkVertexInputAttributeDescription, 3> attributes{};
         attributes[0].binding = 0; // which binding to take attribute from
-        attributes[0].location = 0; // location referred in vertex shader as input
+        attributes[0].location = 0; // location referred in vertex shader as input, i.e layout(location=X)
         attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         attributes[0].offset = offsetof(Vertex, position);
         attributes[1].binding = 0; 
         attributes[1].location = 1;
         attributes[1].format = VK_FORMAT_R32G32B32_SFLOAT;
         attributes[1].offset = offsetof(Vertex, color);
+        attributes[2].binding = 0; 
+        attributes[2].location = 2;
+        attributes[2].format = VK_FORMAT_R32G32_SFLOAT;
+        attributes[2].offset = offsetof(Vertex, uv);
         return attributes;
     }
 };
 const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}}
+    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 };
+
 const std::vector<uint32_t> indices = {
     0, 1, 2, 2, 3, 0
 };
