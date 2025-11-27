@@ -287,10 +287,10 @@ void Engine::createSwapchain() {
     swapchainExtent = surfaceExtent;
     swapchainFormat = surfaceFormat.format;
     for (size_t i=0; i<imageCount; i++) {
-        createImageView(swapchainFormat, swapchainImages[i], VK_IMAGE_ASPECT_COLOR_BIT, swapchainImageViews[i]);
+        createImageView(swapchainFormat, swapchainImages[i], 1, VK_IMAGE_ASPECT_COLOR_BIT, swapchainImageViews[i]);
     }
 }
-void Engine::createImageView(VkFormat format, VkImage& image, VkImageAspectFlags aspectMask, VkImageView& imageView) {
+void Engine::createImageView(VkFormat format, VkImage& image, uint32_t mipLevels, VkImageAspectFlags aspectMask, VkImageView& imageView) {
     VkImageViewCreateInfo imageViewInfo{};
     imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     imageViewInfo.format = format;
@@ -307,7 +307,7 @@ void Engine::createImageView(VkFormat format, VkImage& image, VkImageAspectFlags
     imageViewInfo.subresourceRange.baseArrayLayer = 0;
     imageViewInfo.subresourceRange.baseMipLevel = 0;
     imageViewInfo.subresourceRange.layerCount = 1;
-    imageViewInfo.subresourceRange.levelCount = 1;
+    imageViewInfo.subresourceRange.levelCount = mipLevels;
     VK_CHECK(vkCreateImageView(device, &imageViewInfo, nullptr, &imageView));
 }
 void Engine::createDescriptorSetLayout() {
@@ -748,6 +748,7 @@ void Engine::createUniformBuffers() {
 void Engine::createTextureImage() {
     int texWidth, texHeight, texChannels;
     stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    mipLevels = std::floor(std::log2(std::max(texWidth, texHeight)))+1;
     VkDeviceSize imageSize = texWidth*texHeight*4;
     if (!pixels) throw std::runtime_error("Cannot read the texture file");
 
@@ -761,19 +762,19 @@ void Engine::createTextureImage() {
     vkUnmapMemory(device, stagingBufferMemory);
     stbi_image_free(pixels);
     
-    createImage(textureImage, textureImageMemory, texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, 
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    createImage(textureImage, textureImageMemory, texWidth, texHeight, mipLevels, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, 
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, mipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     copyBufferToImage(stagingBuffer, textureImage, texWidth, texHeight);
-    transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    generateMipmaps(textureImage, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, mipLevels);
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingBufferMemory, nullptr);
 
-    createImageView(VK_FORMAT_R8G8B8A8_SRGB, textureImage, VK_IMAGE_ASPECT_COLOR_BIT, textureImageView);
+    createImageView(VK_FORMAT_R8G8B8A8_SRGB, textureImage, mipLevels, VK_IMAGE_ASPECT_COLOR_BIT, textureImageView);
 }
-void Engine::createImage(VkImage& image, VkDeviceMemory& imageMemory, int width, int height,
+void Engine::createImage(VkImage& image, VkDeviceMemory& imageMemory, int width, int height, uint32_t mipLevels,
 VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags memoryProperties) {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -781,7 +782,7 @@ VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryProperty
     imageInfo.extent.width = width;
     imageInfo.extent.height = height;
     imageInfo.extent.depth = 1; // 3rd dimension in the extent matrix
-    imageInfo.mipLevels = 1;
+    imageInfo.mipLevels = mipLevels;
     imageInfo.arrayLayers = 1;
     imageInfo.format = format;
     // VK_IMAGE_TILING_LINEAR means texels are laid out in a row-major order
@@ -825,15 +826,15 @@ void Engine::createTextureSampler() {
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     samplerInfo.mipLodBias = 0.0f;
     samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
+    samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
     VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler));
 }
 void Engine::createDepthBuffer() {
     VkFormat depthFormat = findDepthFormat();
-    createImage(depthBuffer, depthBufferMemory, swapchainExtent.width, swapchainExtent.height, depthFormat, 
+    createImage(depthBuffer, depthBufferMemory, swapchainExtent.width, swapchainExtent.height, 1, depthFormat, 
         VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    createImageView(depthFormat, depthBuffer, VK_IMAGE_ASPECT_DEPTH_BIT, depthBufferImageView);
-    transitionImageLayout(depthBuffer, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    createImageView(depthFormat, depthBuffer, 1, VK_IMAGE_ASPECT_DEPTH_BIT, depthBufferImageView);
+    transitionImageLayout(depthBuffer, depthFormat, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 }
 VkFormat Engine::findDepthFormat() {
     std::vector<VkFormat> formats = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT};
@@ -1011,9 +1012,102 @@ void Engine::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, u
         copyRegion.imageSubresource.baseArrayLayer = 0;
         copyRegion.imageSubresource.layerCount = 1;
         copyRegion.imageSubresource.mipLevel = 0;
+        // it is assumed the image layout has been transitioned to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL 
         vkCmdCopyBufferToImage(cmdBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
     }
     stopRecording(cmdBuffer, transferCmdPool);
+}
+void Engine::generateMipmaps(VkImage image, VkFormat format, uint32_t width, uint32_t height, uint32_t mipLevels) {
+    // check if the device supports linear blitting
+    VkFormatProperties props{};
+    vkGetPhysicalDeviceFormatProperties(pDevice, format, &props);
+    if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) 
+        throw std::runtime_error("Device doesn't support linear blitting");
+    // it is assumed the data has already been transferred to the image (mip level 0) prior to calling this function
+    // it means the entire image (all mipmaps) layout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    VkCommandBuffer cmdBuffer = beginRecording(graphicsCmdPool);
+    {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.subresourceRange.levelCount = 1;
+        
+        int32_t mipWidth = width;
+        int32_t mipHeight = height;
+        
+        for (uint32_t i = 1; i<mipLevels; i++) {
+            // transition source image mipmap from VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL to VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL 
+            barrier.subresourceRange.baseMipLevel = i-1;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; // wait until content is transferred from previous blit or vkCmdCopyBufferToImage
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT; // blit is transfer operation, so we must wait befor reading from this source
+            vkCmdPipelineBarrier(
+                cmdBuffer, 
+                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0,
+                0, nullptr,
+                0, nullptr,
+                1, &barrier
+            );
+
+            VkImageBlit blit{};
+            // srcOffsets and dstOffsets determine the 3D region that data will be blitted from/to
+            blit.srcOffsets[0] = {0, 0, 0};
+            blit.srcOffsets[1] = {mipWidth, mipHeight, 1};
+            blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            blit.srcSubresource.baseArrayLayer = 0;
+            blit.srcSubresource.layerCount = 1;
+            blit.srcSubresource.mipLevel = i-1;
+            blit.dstOffsets[0] = {0, 0, 0};
+            blit.dstOffsets[1] = {mipWidth>1 ? mipWidth/2 : 1, mipHeight>1 ? mipHeight/2 : 1, 1};
+            blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            blit.dstSubresource.baseArrayLayer = 0;
+            blit.dstSubresource.layerCount = 1;
+            blit.dstSubresource.mipLevel = i;
+            vkCmdBlitImage(cmdBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                1, &blit, VK_FILTER_LINEAR);
+
+            // transition source image mipmap from VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL to VK_IMAGE_LAYOUT_SHADER_READ_OPTIMAL
+            // for future operations 
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            vkCmdPipelineBarrier(
+                cmdBuffer, 
+                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                0,
+                0, nullptr,
+                0, nullptr,
+                1, &barrier
+            );
+
+            if (mipWidth > 1) mipWidth/=2;
+            if (mipHeight > 1) mipHeight/=2;
+        }
+
+        // at the end of the loop, the last mipmap has layout VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+        barrier.subresourceRange.baseMipLevel = mipLevels - 1;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(
+            cmdBuffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &barrier
+        );
+    }
+    stopRecording(cmdBuffer, graphicsCmdPool);
 }
 VkCommandBuffer Engine::beginRecording(VkCommandPool& cmdPool) {
     VkCommandBuffer cmdBuffer{};
@@ -1108,7 +1202,8 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
     }
     vkEndCommandBuffer(cmdBuffer);
 }
-void Engine::transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout) {
+void Engine::transitionImageLayout(VkImage image, VkFormat format, uint32_t mipLevels, VkImageLayout oldLayout, VkImageLayout newLayout) {
+    // this function transitions the entire image layout, i.e all mipmaps at once
     VkCommandBuffer cmdBuffer = beginRecording(transferCmdPool);
 
     // image layout transitions are done using image memory barriers
@@ -1131,7 +1226,7 @@ void Engine::transitionImageLayout(VkImage image, VkFormat format, VkImageLayout
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.baseMipLevel = 0;
     barrier.subresourceRange.layerCount = 1;
-    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.levelCount = mipLevels;
     barrier.srcAccessMask = 0; // what operations that involve the resource must happen before the barrier
     barrier.dstAccessMask = 0; // what operations that involve the resource must wait on the barrier
 

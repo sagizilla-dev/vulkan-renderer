@@ -109,6 +109,7 @@ private:
     VkImageView depthBufferImageView;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    uint32_t mipLevels;
 
     void createWindow();
     void loadModel();
@@ -116,7 +117,7 @@ private:
     void createSurface();
     void createDevice();
     void createSwapchain();
-    void createImageView(VkFormat format, VkImage& image, VkImageAspectFlags aspectMask, VkImageView& imageView);
+    void createImageView(VkFormat format, VkImage& image, uint32_t mipLevels, VkImageAspectFlags aspectMask, VkImageView& imageView);
     void createDescriptorSetLayout();
     void createDescriptorPool();
     void createDescriptorSets();
@@ -138,7 +139,7 @@ private:
     void createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
     void createUniformBuffers();
     void createTextureImage();
-    void createImage(VkImage& image, VkDeviceMemory& imageMemory, int width, int height,
+    void createImage(VkImage& image, VkDeviceMemory& imageMemory, int width, int height, uint32_t mipLevels,
         VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
     void createTextureSampler();
     void createDepthBuffer();
@@ -171,10 +172,11 @@ private:
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+    void generateMipmaps(VkImage image, VkFormat format, uint32_t width, uint32_t height, uint32_t mipLevels);
     VkCommandBuffer beginRecording(VkCommandPool& cmdPool);
     void stopRecording(VkCommandBuffer& cmdBuffer, VkCommandPool& cmdPool);
     void updateMVP();
 
     void recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex);
-    void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+    void transitionImageLayout(VkImage image, VkFormat format, uint32_t mipLevels, VkImageLayout oldLayout, VkImageLayout newLayout);
 };
