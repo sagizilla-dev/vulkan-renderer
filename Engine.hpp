@@ -43,23 +43,19 @@ struct Vertex {
         attributes[2].offset = offsetof(Vertex, uv);
         return attributes;
     }
+    bool operator==(const Vertex& v) const {
+        return position == v.position && color == v.color && uv == v.uv;
+    }
 };
-const std::vector<Vertex> vertices = {
-    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
-
-    {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
-};
-
-const std::vector<uint32_t> indices = {
-    0, 1, 2, 2, 3, 0,
-    4, 5, 6, 6, 7, 4
-};
+namespace std {
+    template<> struct hash<Vertex> {
+        size_t operator()(Vertex const& vertex) const {
+            return ((hash<glm::vec3>()(vertex.position) ^
+                   (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+                   (hash<glm::vec2>()(vertex.uv) << 1);
+        }
+    };
+}
 
 
 struct MVP {
@@ -111,8 +107,11 @@ private:
     VkImage depthBuffer;
     VkDeviceMemory depthBufferMemory;
     VkImageView depthBufferImageView;
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
 
     void createWindow();
+    void loadModel();
     void createInstance();
     void createSurface();
     void createDevice();
@@ -147,6 +146,8 @@ private:
 
     const int MAX_FRAMES_IN_FLIGHT = 4;
     uint32_t currentFrame = 0;
+    const std::string MODEL_PATH = "../viking_room.obj";
+    const std::string TEXTURE_PATH = "../viking_room.png";
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
         "VK_KHR_xcb_surface"

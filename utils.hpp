@@ -9,12 +9,14 @@
 #include <fstream>
 #include <array>
 #include <chrono>
+#include <unordered_map>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/hash.hpp>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -22,6 +24,8 @@
 #include <vulkan/vulkan.hpp>
 
 #include "stb_image.h"
+
+#include "tiny_obj_loader.h"
 
 inline const char* vkResultToString(VkResult r) {
     switch (r) {
