@@ -17,6 +17,7 @@ Engine::Engine() {
     createCommandPool(graphicsCmdPool, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, queueFamilies.graphicsFamily.value());
     createCommandPool(transferCmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
     createDepthBuffer();
+    createColorBuffer();
     createRenderpass();
     createFramebuffers();
     createUniformBuffers();
@@ -206,6 +207,7 @@ void Engine::createDevice() {
         if (isDeviceSuitable(candidate)) {
             pDevice = candidate;
             queueFamilies = findQueueFamilies(candidate);
+            msaaSamples = getMaxSampleCount();
             break;
         }
     }
@@ -457,7 +459,7 @@ void Engine::createGraphicsPipeline() {
     VkPipelineMultisampleStateCreateInfo msaaInfo{};
     msaaInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     msaaInfo.sampleShadingEnable = VK_FALSE;
-    msaaInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    msaaInfo.rasterizationSamples = msaaSamples;
 
     VkPipelineDepthStencilStateCreateInfo depthStencilInfo{};
     depthStencilInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -524,30 +526,46 @@ void Engine::createRenderpass() {
     // all attachments, i.e color, depth, etc, are passed from the framebuffer in
     // the same order as they were defined during framebuffer creation
     // so this array must have the same order
-    std::vector<VkAttachmentDescription> attachmentDescriptions(2);
+    std::vector<VkAttachmentDescription> attachmentDescriptions(3);
+    // color buffer
     attachmentDescriptions[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachmentDescriptions[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    attachmentDescriptions[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     attachmentDescriptions[0].format = swapchainFormat;
     attachmentDescriptions[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // upon loading we need to clear the image
     attachmentDescriptions[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    attachmentDescriptions[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachmentDescriptions[0].samples = msaaSamples;
     attachmentDescriptions[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachmentDescriptions[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // depth buffer
     attachmentDescriptions[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     attachmentDescriptions[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     attachmentDescriptions[1].format = findDepthFormat();
     attachmentDescriptions[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     attachmentDescriptions[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE; // we don't store the depth buffer after rendering
-    attachmentDescriptions[1].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachmentDescriptions[1].samples = msaaSamples;
     attachmentDescriptions[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachmentDescriptions[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    // resolve buffer / swapchain image
+    attachmentDescriptions[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachmentDescriptions[2].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    attachmentDescriptions[2].format = swapchainFormat;
+    attachmentDescriptions[2].loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachmentDescriptions[2].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachmentDescriptions[2].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachmentDescriptions[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachmentDescriptions[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 
     // each subpass has an array of attachment references
-    std::vector<VkAttachmentReference> attachmentReferences(2);
+    std::vector<VkAttachmentReference> attachmentReferences(3);
+    // color buffer
     attachmentReferences[0].attachment = 0; // index of the attachment in the attachment descriptions array
     attachmentReferences[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // layout that the image must have upon entering the subpass
+    // depth buffer
     attachmentReferences[1].attachment = 1;
     attachmentReferences[1].layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    // resolve buffer
+    attachmentReferences[2].attachment = 2;
+    attachmentReferences[2].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
     // subpass dependency takes care of image layout transitions for each subpass
     // renderpass by default has two implicit image layout transitiosn:
@@ -570,12 +588,15 @@ void Engine::createRenderpass() {
     subpassDependency.dstStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     subpassDependency.dstAccessMask |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
 
+    subpassDependency.srcAccessMask |= VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT; // wait for previous frame's color buffer writes to finish
+
     VkSubpassDescription subpass{};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     // the index of the attachment in this array is referenced in the fragment shader as layout(location=X) out
     subpass.pColorAttachments = &attachmentReferences[0];
     subpass.pDepthStencilAttachment = &attachmentReferences[1];
+    subpass.pResolveAttachments = &attachmentReferences[2];
 
     VkRenderPassCreateInfo renderpassInfo{};
     renderpassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -593,7 +614,7 @@ void Engine::createFramebuffers() {
         // the order of image views/attachments defined here is important
         // image views/attachments are passed to the render pass in the same order
         // as they are defined here
-        std::vector<VkImageView> attachments = {swapchainImageViews[i], depthBufferImageView};
+        std::vector<VkImageView> attachments = {colorBufferImageView, depthBufferImageView, swapchainImageViews[i]};
         VkFramebufferCreateInfo framebufferInfo{};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = renderpass;
@@ -643,6 +664,9 @@ void Engine::destroyFence(VkFence& fence) {
     vkDestroyFence(device, fence, nullptr);
 }
 void Engine::cleanupSwapchain() {
+    vkDestroyImage(device, colorBuffer, nullptr);
+    vkFreeMemory(device, colorBufferMemory, nullptr);
+    vkDestroyImageView(device, colorBufferImageView, nullptr);
     vkDestroyImage(device, depthBuffer, nullptr);
     vkFreeMemory(device, depthBufferMemory, nullptr);
     vkDestroyImageView(device, depthBufferImageView, nullptr);
@@ -661,6 +685,7 @@ void Engine::recreateSwapchain() {
     
     createSwapchain();
     createDepthBuffer();
+    createColorBuffer();
     createFramebuffers();
 }
 void Engine::createVertexBuffer() {
@@ -748,7 +773,7 @@ void Engine::createUniformBuffers() {
 void Engine::createTextureImage() {
     int texWidth, texHeight, texChannels;
     stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
-    mipLevels = std::floor(std::log2(std::max(texWidth, texHeight)))+1;
+    uint32_t mipLevels = std::floor(std::log2(std::max(texWidth, texHeight)))+1;
     VkDeviceSize imageSize = texWidth*texHeight*4;
     if (!pixels) throw std::runtime_error("Cannot read the texture file");
 
@@ -762,7 +787,7 @@ void Engine::createTextureImage() {
     vkUnmapMemory(device, stagingBufferMemory);
     stbi_image_free(pixels);
     
-    createImage(textureImage, textureImageMemory, texWidth, texHeight, mipLevels, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, 
+    createImage(textureImage, textureImageMemory, VK_SAMPLE_COUNT_1_BIT, texWidth, texHeight, mipLevels, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, 
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, mipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -774,7 +799,7 @@ void Engine::createTextureImage() {
 
     createImageView(VK_FORMAT_R8G8B8A8_SRGB, textureImage, mipLevels, VK_IMAGE_ASPECT_COLOR_BIT, textureImageView);
 }
-void Engine::createImage(VkImage& image, VkDeviceMemory& imageMemory, int width, int height, uint32_t mipLevels,
+void Engine::createImage(VkImage& image, VkDeviceMemory& imageMemory, VkSampleCountFlagBits samples, int width, int height, uint32_t mipLevels,
 VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags memoryProperties) {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -793,7 +818,7 @@ VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryProperty
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // we transition the image layout to TRANSFER_DST and only then copy data
     imageInfo.usage = usage;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.samples = samples;
     VK_CHECK(vkCreateImage(device, &imageInfo, nullptr, &image));
 
     VkMemoryRequirements memRequirements;
@@ -822,6 +847,9 @@ void Engine::createTextureSampler() {
     // if set to VK_TRUE, coordinates are within [0, texWidth) and [0, texHeight)
     samplerInfo.unnormalizedCoordinates = VK_FALSE; // use [0, 1)
     samplerInfo.compareEnable = VK_FALSE; // if set to VK_TRUE, compare texel to a value first and use the result in filtering operations
+    // LOD determines what mipmap to load
+    // it is clamped between minLod and maxLod
+    // the smaller LOD, the closer the object is, and lower mipmap is loaded for better quality
     samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     samplerInfo.mipLodBias = 0.0f;
@@ -831,10 +859,17 @@ void Engine::createTextureSampler() {
 }
 void Engine::createDepthBuffer() {
     VkFormat depthFormat = findDepthFormat();
-    createImage(depthBuffer, depthBufferMemory, swapchainExtent.width, swapchainExtent.height, 1, depthFormat, 
+    createImage(depthBuffer, depthBufferMemory, msaaSamples, swapchainExtent.width, swapchainExtent.height, 1, depthFormat, 
         VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     createImageView(depthFormat, depthBuffer, 1, VK_IMAGE_ASPECT_DEPTH_BIT, depthBufferImageView);
     transitionImageLayout(depthBuffer, depthFormat, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+}
+void Engine::createColorBuffer() {
+    // Vulkan specs enforce that images with more than one sample per pixel must have 1 mip level
+    createImage(colorBuffer, colorBufferMemory, msaaSamples, swapchainExtent.width, swapchainExtent.height, 1, swapchainFormat, 
+        VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    createImageView(swapchainFormat, colorBuffer, 1, VK_IMAGE_ASPECT_COLOR_BIT, colorBufferImageView);
+    transitionImageLayout(colorBuffer, swapchainFormat, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL); 
 }
 VkFormat Engine::findDepthFormat() {
     std::vector<VkFormat> formats = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT};
@@ -999,6 +1034,8 @@ void Engine::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize siz
     stopRecording(cmdBuffer, transferCmdPool);
 }
 void Engine::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
+    // this function copies data to the first mip level of the image,
+    // the other levels are still undefined
     VkCommandBuffer cmdBuffer = beginRecording(transferCmdPool);
     {
         VkBufferImageCopy copyRegion{};
@@ -1012,7 +1049,7 @@ void Engine::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, u
         copyRegion.imageSubresource.baseArrayLayer = 0;
         copyRegion.imageSubresource.layerCount = 1;
         copyRegion.imageSubresource.mipLevel = 0;
-        // it is assumed the image layout has been transitioned to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL 
+        // it is assumed the image layout has been transitioned to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL prior to calling this function
         vkCmdCopyBufferToImage(cmdBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
     }
     stopRecording(cmdBuffer, transferCmdPool);
@@ -1024,7 +1061,8 @@ void Engine::generateMipmaps(VkImage image, VkFormat format, uint32_t width, uin
     if (!(props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) 
         throw std::runtime_error("Device doesn't support linear blitting");
     // it is assumed the data has already been transferred to the image (mip level 0) prior to calling this function
-    // it means the entire image (all mipmaps) layout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+    // it means the entire image (all mipmaps) layout is VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, but only
+    // mip level 0 has data
     VkCommandBuffer cmdBuffer = beginRecording(graphicsCmdPool);
     {
         VkImageMemoryBarrier barrier{};
@@ -1108,6 +1146,19 @@ void Engine::generateMipmaps(VkImage image, VkFormat format, uint32_t width, uin
         );
     }
     stopRecording(cmdBuffer, graphicsCmdPool);
+}
+VkSampleCountFlagBits Engine::getMaxSampleCount() {
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(pDevice, &props);
+    VkSampleCountFlags counts = props.limits.framebufferColorSampleCounts & props.limits.framebufferDepthSampleCounts;
+    if (counts & VK_SAMPLE_COUNT_64_BIT) { return VK_SAMPLE_COUNT_64_BIT; }
+    if (counts & VK_SAMPLE_COUNT_32_BIT) { return VK_SAMPLE_COUNT_32_BIT; }
+    if (counts & VK_SAMPLE_COUNT_16_BIT) { return VK_SAMPLE_COUNT_16_BIT; }
+    if (counts & VK_SAMPLE_COUNT_8_BIT) { return VK_SAMPLE_COUNT_8_BIT; }
+    if (counts & VK_SAMPLE_COUNT_4_BIT) { return VK_SAMPLE_COUNT_4_BIT; }
+    if (counts & VK_SAMPLE_COUNT_2_BIT) { return VK_SAMPLE_COUNT_2_BIT; }
+
+    return VK_SAMPLE_COUNT_1_BIT;
 }
 VkCommandBuffer Engine::beginRecording(VkCommandPool& cmdPool) {
     VkCommandBuffer cmdBuffer{};
@@ -1204,6 +1255,7 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
 }
 void Engine::transitionImageLayout(VkImage image, VkFormat format, uint32_t mipLevels, VkImageLayout oldLayout, VkImageLayout newLayout) {
     // this function transitions the entire image layout, i.e all mipmaps at once
+
     VkCommandBuffer cmdBuffer = beginRecording(transferCmdPool);
 
     // image layout transitions are done using image memory barriers
@@ -1243,14 +1295,20 @@ void Engine::transitionImageLayout(VkImage image, VkFormat format, uint32_t mipL
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         
         srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT; // do not execute this stage until image layout transition is done
     } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
         barrier.srcAccessMask = 0;
         // do not write or read from depth buffer until the image layout transition is done
         barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         
         srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-        dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT; // do not execute this stage until image layout transition is done
+        dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        
+        srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     } else {
         throw std::runtime_error("Unsupported layout transition");
     }

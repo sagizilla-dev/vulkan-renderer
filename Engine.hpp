@@ -107,9 +107,12 @@ private:
     VkImage depthBuffer;
     VkDeviceMemory depthBufferMemory;
     VkImageView depthBufferImageView;
+    VkImage colorBuffer;
+    VkDeviceMemory colorBufferMemory;
+    VkImageView colorBufferImageView;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
-    uint32_t mipLevels;
+    VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
     void createWindow();
     void loadModel();
@@ -139,10 +142,11 @@ private:
     void createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
     void createUniformBuffers();
     void createTextureImage();
-    void createImage(VkImage& image, VkDeviceMemory& imageMemory, int width, int height, uint32_t mipLevels,
+    void createImage(VkImage& image, VkDeviceMemory& imageMemory, VkSampleCountFlagBits samples, int width, int height, uint32_t mipLevels,
         VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
     void createTextureSampler();
     void createDepthBuffer();
+    void createColorBuffer();
     VkFormat findDepthFormat();
 
     const int MAX_FRAMES_IN_FLIGHT = 4;
@@ -173,6 +177,7 @@ private:
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
     void generateMipmaps(VkImage image, VkFormat format, uint32_t width, uint32_t height, uint32_t mipLevels);
+    VkSampleCountFlagBits getMaxSampleCount();
     VkCommandBuffer beginRecording(VkCommandPool& cmdPool);
     void stopRecording(VkCommandBuffer& cmdBuffer, VkCommandPool& cmdPool);
     void updateMVP();
