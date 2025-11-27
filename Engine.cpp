@@ -23,12 +23,12 @@ Engine::Engine() {
     createUniformBuffers();
     createTextureImage();
     createTextureSampler();
+    createVertexBuffer();
+    createIndexBuffer();
     createDescriptorSetLayout();
     createDescriptorPool();
     createDescriptorSets();
     createGraphicsPipeline();
-    createVertexBuffer();
-    createIndexBuffer();
 }
 Engine::~Engine() {
     vkDestroySampler(device, textureSampler, nullptr);
@@ -152,18 +152,16 @@ void Engine::loadModel() {
     for (const auto& shape : shapes) {
         for (const auto& index : shape.mesh.indices) {
             Vertex vertex{};
-            vertex.position = {
-                attrib.vertices[3 * index.vertex_index + 0],
-                attrib.vertices[3 * index.vertex_index + 1],
-                attrib.vertices[3 * index.vertex_index + 2]
-            };
+            vertex.vx = attrib.vertices[3 * index.vertex_index + 0];
+            vertex.vy = attrib.vertices[3 * index.vertex_index + 1];
+            vertex.vz = attrib.vertices[3 * index.vertex_index + 2];
 
-            vertex.uv = {
-                attrib.texcoords[2 * index.texcoord_index + 0],
-                1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
-            };
+            vertex.nx = attrib.normals[3 * index.normal_index + 0];
+            vertex.ny = attrib.normals[3 * index.normal_index + 1];
+            vertex.nz = attrib.normals[3 * index.normal_index + 2];
 
-            vertex.color = {1.0f, 1.0f, 1.0f};
+            vertex.tu = attrib.texcoords[2 * index.texcoord_index + 0];
+            vertex.tv = 1.0f - attrib.texcoords[2 * index.texcoord_index + 1];
             
             if (uniqueVertices.count(vertex)==0) {
                 uniqueVertices[vertex] = vertices.size();
@@ -316,7 +314,7 @@ void Engine::createDescriptorSetLayout() {
     // this function creates descriptor set layout, which specifies what type of resources
     // are to be passed into the shaders, same way render pass defines what type of attachments to expect
     // descriptor sets define data itself, same way framebuffers define exact attachments
-    std::vector<VkDescriptorSetLayoutBinding> layoutBindings(2);
+    std::vector<VkDescriptorSetLayoutBinding> layoutBindings(3);
     layoutBindings[0].binding = 0; // referenced in the shader as layout(binding = X)
     layoutBindings[0].descriptorCount = 1; // descriptor can be an array
     layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -325,6 +323,10 @@ void Engine::createDescriptorSetLayout() {
     layoutBindings[1].descriptorCount = 1;
     layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     layoutBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    layoutBindings[2].binding = 2;
+    layoutBindings[2].descriptorCount = 1;
+    layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    layoutBindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
     descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -333,12 +335,14 @@ void Engine::createDescriptorSetLayout() {
     VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &descriptorSetLayout));
 }
 void Engine::createDescriptorPool() {
-    std::vector<VkDescriptorPoolSize> poolSizes(2);
+    std::vector<VkDescriptorPoolSize> poolSizes(3);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     // number of descriptors of a specific time
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[2].descriptorCount = MAX_FRAMES_IN_FLIGHT;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -371,7 +375,12 @@ void Engine::createDescriptorSets() {
         imageInfo.imageView = textureImageView;
         imageInfo.sampler = textureSampler;
 
-        std::vector<VkWriteDescriptorSet> writeDescriptors(2);
+        VkDescriptorBufferInfo verticesBufferInfo{};
+        verticesBufferInfo.buffer = vertexBuffer;
+        verticesBufferInfo.offset = 0;
+        verticesBufferInfo.range = sizeof(Vertex);
+
+        std::vector<VkWriteDescriptorSet> writeDescriptors(3);
         writeDescriptors[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writeDescriptors[0].pBufferInfo = &bufferInfo;
         writeDescriptors[0].descriptorCount = 1; // in case the descriptor is an array
@@ -382,11 +391,19 @@ void Engine::createDescriptorSets() {
 
         writeDescriptors[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writeDescriptors[1].pImageInfo = &imageInfo;
-        writeDescriptors[1].descriptorCount = 1; // in case the descriptor is an array
+        writeDescriptors[1].descriptorCount = 1;
         writeDescriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writeDescriptors[1].dstSet = descriptorSets[i];
         writeDescriptors[1].dstBinding = 1;
         writeDescriptors[1].dstArrayElement = 0;
+
+        writeDescriptors[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeDescriptors[2].pBufferInfo = &verticesBufferInfo;
+        writeDescriptors[2].descriptorCount = 1;
+        writeDescriptors[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writeDescriptors[2].dstSet = descriptorSets[i];
+        writeDescriptors[2].dstBinding = 2;
+        writeDescriptors[2].dstArrayElement = 0;
 
         vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
     }
@@ -423,14 +440,14 @@ void Engine::createGraphicsPipeline() {
     // this fixed function describes what to expect as inputs to vertex shaders
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    // attribute description just describes data inside the vertex
-    auto attributes = Vertex::getAttributeDescription();
-    vertexInputInfo.vertexAttributeDescriptionCount = attributes.size();
-    vertexInputInfo.pVertexAttributeDescriptions = attributes.data();
-    // binding is spacing between data and whether the data is per-vertex or per-instance
-    auto bindings = Vertex::getBindingDescription();
-    vertexInputInfo.vertexBindingDescriptionCount = 1;
-    vertexInputInfo.pVertexBindingDescriptions = &bindings;
+    // // attribute description just describes data inside the vertex
+    // auto attributes = Vertex::getAttributeDescription();
+    // vertexInputInfo.vertexAttributeDescriptionCount = attributes.size();
+    // vertexInputInfo.pVertexAttributeDescriptions = attributes.data();
+    // // binding is spacing between data and whether the data is per-vertex or per-instance
+    // auto bindings = Vertex::getBindingDescription();
+    // vertexInputInfo.vertexBindingDescriptionCount = 1;
+    // vertexInputInfo.pVertexBindingDescriptions = &bindings;
 
     VkPipelineInputAssemblyStateCreateInfo assemblyInfo{};
     assemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -703,7 +720,7 @@ void Engine::createVertexBuffer() {
     vkUnmapMemory(device, stagingBufferMemory); // now the memory is transferred from CPU to GPU memory held by the buffer
 
     createBuffer(vertexBuffer, vertexBufferMemory, vertexBufferSize,
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     copyBuffer(stagingBuffer, vertexBuffer, vertexBufferSize);
@@ -1230,7 +1247,7 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
 
             VkDeviceSize offset = {0};
             // this function is used to bind vertex buffer to bindings defined in graphics pipeline creation
-            vkCmdBindVertexBuffers(cmdBuffer, 0, 1, &vertexBuffer, &offset);
+            // vkCmdBindVertexBuffers(cmdBuffer, 0, 1, &vertexBuffer, &offset);
             vkCmdBindIndexBuffer(cmdBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
             VkViewport viewport{};

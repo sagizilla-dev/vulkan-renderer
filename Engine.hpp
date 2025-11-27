@@ -16,9 +16,9 @@ struct SurfaceDetails {
 };
 
 struct Vertex {
-    glm::vec3 position;
-    glm::vec3 color;
-    glm::vec2 uv;
+    float vx, vy, vz;
+    float nx, ny, nz;
+    float tu, tv;
     // binding descriptions specify at which rate to load data
     static VkVertexInputBindingDescription getBindingDescription() {
         VkVertexInputBindingDescription binding{};
@@ -32,27 +32,29 @@ struct Vertex {
         attributes[0].binding = 0; // which binding to take attribute from
         attributes[0].location = 0; // location referred in vertex shader as input, i.e layout(location=X)
         attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributes[0].offset = offsetof(Vertex, position);
+        attributes[0].offset = offsetof(Vertex, vx);
         attributes[1].binding = 0; 
         attributes[1].location = 1;
         attributes[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        attributes[1].offset = offsetof(Vertex, color);
+        attributes[1].offset = offsetof(Vertex, nx);
         attributes[2].binding = 0; 
         attributes[2].location = 2;
         attributes[2].format = VK_FORMAT_R32G32_SFLOAT;
-        attributes[2].offset = offsetof(Vertex, uv);
+        attributes[2].offset = offsetof(Vertex, tu);
         return attributes;
     }
     bool operator==(const Vertex& v) const {
-        return position == v.position && color == v.color && uv == v.uv;
+        return vx == v.vx && vy == v.vy && vz == v.vz && 
+                nx == v.nx && ny == v.ny && nz == v.nz &&
+                tu == v.tu && tv == v.tv;
     }
 };
 namespace std {
     template<> struct hash<Vertex> {
         size_t operator()(Vertex const& vertex) const {
-            return ((hash<glm::vec3>()(vertex.position) ^
-                   (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
-                   (hash<glm::vec2>()(vertex.uv) << 1);
+            return ((hash<glm::vec3>()(glm::vec3(vertex.vx, vertex.vy, vertex.vz)) ^
+                   (hash<glm::vec3>()(glm::vec3(vertex.nx, vertex.ny, vertex.nz)) << 1)) >> 1) ^
+                   (hash<glm::vec2>()(glm::vec2(vertex.tu, vertex.tv)) << 1);
         }
     };
 }
