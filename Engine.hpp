@@ -17,7 +17,7 @@ struct SurfaceDetails {
 
 struct Vertex {
     float vx, vy, vz;
-    float nx, ny, nz;
+    uint8_t nx, ny, nz;
     float tu, tv;
     // binding descriptions specify at which rate to load data
     static VkVertexInputBindingDescription getBindingDescription() {
@@ -35,7 +35,7 @@ struct Vertex {
         attributes[0].offset = offsetof(Vertex, vx);
         attributes[1].binding = 0; 
         attributes[1].location = 1;
-        attributes[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributes[1].format = VK_FORMAT_R8G8B8_UINT;
         attributes[1].offset = offsetof(Vertex, nx);
         attributes[2].binding = 0; 
         attributes[2].location = 2;

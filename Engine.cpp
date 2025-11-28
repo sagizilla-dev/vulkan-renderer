@@ -156,9 +156,14 @@ void Engine::loadModel() {
             vertex.vy = attrib.vertices[3 * index.vertex_index + 1];
             vertex.vz = attrib.vertices[3 * index.vertex_index + 2];
 
-            vertex.nx = attrib.normals[3 * index.normal_index + 0];
-            vertex.ny = attrib.normals[3 * index.normal_index + 1];
-            vertex.nz = attrib.normals[3 * index.normal_index + 2];
+            glm::vec3 uncompressed;
+            uncompressed[0] = attrib.normals[3 * index.normal_index + 0];
+            uncompressed[1] = attrib.normals[3 * index.normal_index + 1];
+            uncompressed[2] = attrib.normals[3 * index.normal_index + 2];
+            uncompressed = glm::normalize(uncompressed); // now the normal vector is between -1 and 1
+            vertex.nx = uint8_t((uncompressed[0]*0.5f + 0.5f)*255.0f); // now the vector is within [0, 255]
+            vertex.ny = uint8_t((uncompressed[1]*0.5f + 0.5f)*255.0f);
+            vertex.nz = uint8_t((uncompressed[2]*0.5f + 0.5f)*255.0f);
 
             vertex.tu = attrib.texcoords[2 * index.texcoord_index + 0];
             vertex.tv = 1.0f - attrib.texcoords[2 * index.texcoord_index + 1];
@@ -215,10 +220,15 @@ void Engine::createDevice() {
     deviceInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceInfo.enabledExtensionCount = deviceExtensions.size();
     deviceInfo.ppEnabledExtensionNames = deviceExtensions.data();
-    VkPhysicalDeviceFeatures features{};
-    features.geometryShader = VK_TRUE;
-    features.samplerAnisotropy = VK_TRUE;
-    deviceInfo.pEnabledFeatures = &features;
+    VkPhysicalDeviceFeatures2 features{};
+    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features.features.geometryShader = VK_TRUE;
+    features.features.samplerAnisotropy = VK_TRUE;
+    VkPhysicalDeviceVulkan12Features features12{};
+    features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    features12.uniformAndStorageBuffer8BitAccess = VK_TRUE;
+    features.pNext = &features12;
+    deviceInfo.pNext = &features;
     
     std::set<uint32_t> uniqueQueueFamilies = {queueFamilies.graphicsFamily.value(), queueFamilies.presentFamily.value()};
     std::vector<VkDeviceQueueCreateInfo> queueInfos{};
@@ -711,13 +721,18 @@ void Engine::createVertexBuffer() {
     VkDeviceSize vertexBufferSize = sizeof(vertices[0])*vertices.size();
     createBuffer(stagingBuffer, stagingBufferMemory, vertexBufferSize, 
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        // these flags are important
+        // VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT specifies that we can map GPU memory to CPU memory and therefore
+        // copy data from host to device
+        //  VK_MEMORY_PROPERTY_HOST_COHERENT_BIT helps us avoid the case when the data is written into cache
+        // but has not been flushed yet
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
 
-    // tie CPU memory to GPU memory and copy data
+    // map CPU memory to GPU memory and copy data
     void* data;
     vkMapMemory(device, stagingBufferMemory, 0, vertexBufferSize, 0, &data);
     memcpy(data, vertices.data(), sizeof(vertices[0])*vertices.size());
-    vkUnmapMemory(device, stagingBufferMemory); // now the memory is transferred from CPU to GPU memory held by the buffer
+    vkUnmapMemory(device, stagingBufferMemory); // now the memory is transferred from CPU to GPU
 
     createBuffer(vertexBuffer, vertexBufferMemory, vertexBufferSize,
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
