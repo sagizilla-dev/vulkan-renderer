@@ -226,7 +226,8 @@ void Engine::createDevice() {
     features.features.samplerAnisotropy = VK_TRUE;
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
-    features12.uniformAndStorageBuffer8BitAccess = VK_TRUE;
+    features12.storageBuffer8BitAccess = VK_TRUE;
+    features12.shaderInt8 = VK_TRUE;
     features.pNext = &features12;
     deviceInfo.pNext = &features;
     
@@ -388,7 +389,7 @@ void Engine::createDescriptorSets() {
         VkDescriptorBufferInfo verticesBufferInfo{};
         verticesBufferInfo.buffer = vertexBuffer;
         verticesBufferInfo.offset = 0;
-        verticesBufferInfo.range = sizeof(Vertex);
+        verticesBufferInfo.range = sizeof(vertices[0])*vertices.size();
 
         std::vector<VkWriteDescriptorSet> writeDescriptors(3);
         writeDescriptors[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

@@ -17,7 +17,7 @@ foreach(SHADER ${SHADER_SOURCES})
     set(SPIRV_OUTPUT "${CMAKE_SOURCE_DIR}/${SHADER_NAME}.spv")
     add_custom_command(
         OUTPUT ${SPIRV_OUTPUT}
-        COMMAND ${GLSLC} ${SHADER} -o ${SPIRV_OUTPUT}
+        COMMAND ${GLSLC} ${SHADER} -o ${SPIRV_OUTPUT} --target-env=vulkan1.4
         DEPENDS ${SHADER}
         COMMENT "Compiling ${SHADER_NAME} to SPIR-V"
     )

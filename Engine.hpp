@@ -17,7 +17,7 @@ struct SurfaceDetails {
 
 struct Vertex {
     float vx, vy, vz;
-    uint8_t nx, ny, nz;
+    uint8_t nx, ny, nz, nw; // nw is only used for alignment
     float tu, tv;
     // binding descriptions specify at which rate to load data
     static VkVertexInputBindingDescription getBindingDescription() {
