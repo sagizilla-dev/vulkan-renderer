@@ -1114,6 +1114,7 @@ VkSurfaceFormatKHR Engine::chooseSurfaceFormat(const std::vector<VkSurfaceFormat
     return formats[0];
 }
 VkPresentModeKHR Engine::choosePresentMode(const std::vector<VkPresentModeKHR>& presentModes) {
+    return VK_PRESENT_MODE_IMMEDIATE_KHR;
     for (const auto& mode: presentModes) {
         if (mode==VK_PRESENT_MODE_MAILBOX_KHR) {
             return mode;

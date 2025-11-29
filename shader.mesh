@@ -50,33 +50,33 @@ void main() {
     uint meshletID = gl_WorkGroupID.x;
     uint tid = gl_LocalInvocationID.x;
 
-    Meshlet meshlet = meshlets[meshletID];
-
     // each thread must process a vertex
-    for (uint i = tid; i < meshlet.vertexCount; i+=32) {
-        uint32_t globalVertexID = meshlet.vertices[i]; 
-        Vertex v = vertices[globalVertexID];
+    for (uint i = tid; i < meshlets[meshletID].vertexCount; i+=32) {
+        uint32_t globalVertexID = meshlets[meshletID].vertices[i]; 
 
         // vertices array for a meshlet
-        gl_MeshVerticesNV[i].gl_Position = mvp.proj * mvp.view * mvp.model * vec4(v.vx, v.vy, v.vz, 1.0);
+        gl_MeshVerticesNV[i].gl_Position = mvp.proj * mvp.view * mvp.model * 
+            vec4(vertices[globalVertexID].vx, 
+                vertices[globalVertexID].vy,
+                vertices[globalVertexID].vz, 1.0);
 
-        vec3 decompressed = vec3(v.nx, v.ny, v.nz) / 255.0 * 2.0 - 1.0;
+        vec3 decompressed = vec3(vertices[globalVertexID].nx, vertices[globalVertexID].ny, vertices[globalVertexID].nz) / 255.0 * 2.0 - 1.0;
         Normal[i] = decompressed;
 
-        TexCoords[i] = vec2(v.tu, v.tv);
+        TexCoords[i] = vec2(vertices[globalVertexID].tu, vertices[globalVertexID].tv);
     }
 
     // each thread must process a triangle now
-    for (uint i = tid; i < meshlet.triangleCount; i+=32) {
+    for (uint i = tid; i < meshlets[meshletID].triangleCount; i+=32) {
         uint indexOffset = i * 3;
         // those indices are local, they refer to gl_MeshVerticesNV
-        gl_PrimitiveIndicesNV[indexOffset + 0] = meshlet.indices[indexOffset + 0];
-        gl_PrimitiveIndicesNV[indexOffset + 1] = meshlet.indices[indexOffset + 1]; 
-        gl_PrimitiveIndicesNV[indexOffset + 2] = meshlet.indices[indexOffset + 2]; 
+        gl_PrimitiveIndicesNV[indexOffset + 0] = meshlets[meshletID].indices[indexOffset + 0];
+        gl_PrimitiveIndicesNV[indexOffset + 1] = meshlets[meshletID].indices[indexOffset + 1]; 
+        gl_PrimitiveIndicesNV[indexOffset + 2] = meshlets[meshletID].indices[indexOffset + 2]; 
     }
 
     if (tid==0) {
         // number of primitives outputted
-        gl_PrimitiveCountNV = meshlet.triangleCount;
+        gl_PrimitiveCountNV = meshlets[meshletID].triangleCount;
     }
 }
