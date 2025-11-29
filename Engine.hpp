@@ -58,7 +58,12 @@ namespace std {
         }
     };
 }
-
+struct Meshlet {
+    uint32_t vertices[64];
+    uint8_t indices[126*3];
+    uint8_t triangleCount;
+    uint8_t vertexCount;
+};
 
 struct MVP {
     glm::mat4 model;
@@ -95,6 +100,8 @@ private:
     std::vector<VkFramebuffer> framebuffers;
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
+    VkBuffer meshletBuffer;
+    VkDeviceMemory meshletBufferMemory;
     VkBuffer indexBuffer;
     VkDeviceMemory indexBufferMemory;
     VkCommandPool graphicsCmdPool;
@@ -114,10 +121,12 @@ private:
     VkImageView colorBufferImageView;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<Meshlet> meshlets;
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
     void createWindow();
     void loadModel();
+    void createMeshlets();
     void createInstance();
     void createSurface();
     void createDevice();
@@ -141,6 +150,7 @@ private:
     void recreateSwapchain();
     void createVertexBuffer();
     void createIndexBuffer();
+    void createMeshletBuffer();
     void createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
     void createUniformBuffers();
     void createTextureImage();
@@ -163,7 +173,8 @@ private:
         "VK_LAYER_KHRONOS_validation"
     };
     std::vector<const char*> deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_NV_MESH_SHADER_EXTENSION_NAME
     };
     bool checkInstanceExtensionsSupport();
     bool checkInstanceLayersSupport();

@@ -1,0 +1,82 @@
+#version 460
+
+#extension GL_NV_mesh_shader : require
+#extension GL_EXT_shader_8bit_storage: require
+// this extension allows the use of 8-bit integer types for arithmetic operations
+#extension GL_EXT_shader_explicit_arithmetic_types: require
+
+layout(local_size_x = 32) in;
+layout(triangles) out;
+// we use 126 primitives since hardware allocates primitive indices in 128 byte granularity and needs
+// to reserve 4 bytes for the primitive count
+// therefore 3*126+4 maximizes the fit into 128*3 bytes block
+// going beyond 126 allocates the next 128 bytes
+layout(max_vertices = 64, max_primitives = 126) out;
+
+layout(set = 0, binding = 0) uniform MVP {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+} mvp;
+
+struct Vertex {
+    float vx, vy, vz;
+    uint8_t nx, ny, nz, nw;
+    float tu, tv;
+};
+layout(set = 0, binding = 2) readonly buffer Vertices {
+    Vertex vertices[];
+};
+
+// double indexing is important here
+// having 126*3 uint32_t indices makes up for 126*3*4 = 1512 bytes
+// having 126*3 uint8_t sub indices and 64 uint32_t global indices make up for 126*3 + 64*4 = 634 bytes
+// another important feature of double indexing is vertex de duplication
+// meaning the global vertex at any index is stored only once in the vertex buffer
+struct Meshlet {
+    uint32_t vertices[64];
+    uint8_t indices[126*3];
+    uint8_t triangleCount;
+    uint8_t vertexCount;
+};
+layout(set = 0, binding = 3) readonly buffer Meshlets {
+    Meshlet meshlets[];
+};
+
+layout(location = 0) out vec3 Normal[];
+layout(location = 1) out vec2 TexCoords[];
+
+void main() {
+    uint meshletID = gl_WorkGroupID.x;
+    uint tid = gl_LocalInvocationID.x;
+
+    Meshlet meshlet = meshlets[meshletID];
+
+    // each thread must process a vertex
+    for (uint i = tid; i < meshlet.vertexCount; i+=32) {
+        uint32_t globalVertexID = meshlet.vertices[i]; 
+        Vertex v = vertices[globalVertexID];
+
+        // vertices array for a meshlet
+        gl_MeshVerticesNV[i].gl_Position = mvp.proj * mvp.view * mvp.model * vec4(v.vx, v.vy, v.vz, 1.0);
+
+        vec3 decompressed = vec3(v.nx, v.ny, v.nz) / 255.0 * 2.0 - 1.0;
+        Normal[i] = decompressed;
+
+        TexCoords[i] = vec2(v.tu, v.tv);
+    }
+
+    // each thread must process a triangle now
+    for (uint i = tid; i < meshlet.triangleCount; i+=32) {
+        uint indexOffset = i * 3;
+        // those indices are local, they refer to gl_MeshVerticesNV
+        gl_PrimitiveIndicesNV[indexOffset + 0] = meshlet.indices[indexOffset + 0];
+        gl_PrimitiveIndicesNV[indexOffset + 1] = meshlet.indices[indexOffset + 1]; 
+        gl_PrimitiveIndicesNV[indexOffset + 2] = meshlet.indices[indexOffset + 2]; 
+    }
+
+    if (tid==0) {
+        // number of primitives outputted
+        gl_PrimitiveCountNV = meshlet.triangleCount;
+    }
+}

@@ -10,6 +10,7 @@ void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 Engine::Engine() {
     createWindow();
     loadModel();
+    createMeshlets();
     createInstance();
     createSurface();
     createDevice();
@@ -25,12 +26,15 @@ Engine::Engine() {
     createTextureSampler();
     createVertexBuffer();
     createIndexBuffer();
+    createMeshletBuffer();
     createDescriptorSetLayout();
     createDescriptorPool();
     createDescriptorSets();
     createGraphicsPipeline();
 }
 Engine::~Engine() {
+    vkDestroyBuffer(device, meshletBuffer, nullptr);
+    vkFreeMemory(device, meshletBufferMemory, nullptr);
     vkDestroySampler(device, textureSampler, nullptr);
     vkDestroyImageView(device, textureImageView, nullptr);
     vkDestroyImage(device, textureImage, nullptr);
@@ -177,6 +181,46 @@ void Engine::loadModel() {
         }
     }
 }
+void Engine::createMeshlets() {
+    Meshlet meshlet = {};
+	std::vector<uint8_t> meshletVertices(vertices.size(), 0xff);
+	for (size_t i = 0; i < indices.size(); i += 3) {
+		unsigned int a = indices[i + 0];
+		unsigned int b = indices[i + 1];
+		unsigned int c = indices[i + 2];
+
+		uint8_t& av = meshletVertices[a];
+		uint8_t& bv = meshletVertices[b];
+		uint8_t& cv = meshletVertices[c];
+
+        // if av == 0xff, it means the vertex is not in the meshlet and we need to add it
+		if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.triangleCount >= 126) {
+            meshlets.push_back(meshlet);
+			for (int j = 0; j < meshlet.vertexCount; j++)
+				meshletVertices[meshlet.vertices[j]] = 0xff;
+			meshlet = {};
+		}
+		if (av == 0xff) {
+			av = meshlet.vertexCount;
+			meshlet.vertices[meshlet.vertexCount++] = a;
+		}
+		if (bv == 0xff) {
+			bv = meshlet.vertexCount;
+			meshlet.vertices[meshlet.vertexCount++] = b;
+		}
+		if (cv == 0xff) {
+			cv = meshlet.vertexCount;
+			meshlet.vertices[meshlet.vertexCount++] = c;
+		}
+
+		meshlet.indices[meshlet.triangleCount * 3 + 0] = av;
+		meshlet.indices[meshlet.triangleCount * 3 + 1] = bv;
+		meshlet.indices[meshlet.triangleCount * 3 + 2] = cv;
+        meshlet.triangleCount++;
+	}
+	if (meshlet.triangleCount)
+		meshlets.push_back(meshlet);
+}
 void Engine::createInstance() {
     VkApplicationInfo appInfo{};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -228,6 +272,15 @@ void Engine::createDevice() {
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.storageBuffer8BitAccess = VK_TRUE;
     features12.shaderInt8 = VK_TRUE;
+    VkPhysicalDeviceMeshShaderFeaturesNV meshFeatures{};
+    meshFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_NV;
+    meshFeatures.meshShader = VK_TRUE;
+    // this feature allows us to use LocalSizeId to specify the local workgroup size
+    VkPhysicalDeviceMaintenance4Features maintenanceFeatures{};
+    maintenanceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES;
+    maintenanceFeatures.maintenance4 = VK_TRUE;
+    meshFeatures.pNext = &maintenanceFeatures;
+    features12.pNext = &meshFeatures;
     features.pNext = &features12;
     deviceInfo.pNext = &features;
     
@@ -325,11 +378,12 @@ void Engine::createDescriptorSetLayout() {
     // this function creates descriptor set layout, which specifies what type of resources
     // are to be passed into the shaders, same way render pass defines what type of attachments to expect
     // descriptor sets define data itself, same way framebuffers define exact attachments
-    std::vector<VkDescriptorSetLayoutBinding> layoutBindings(3);
+    std::vector<VkDescriptorSetLayoutBinding> layoutBindings(4);
     layoutBindings[0].binding = 0; // referenced in the shader as layout(binding = X)
     layoutBindings[0].descriptorCount = 1; // descriptor can be an array
     layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    layoutBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    // layoutBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    layoutBindings[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
     layoutBindings[1].binding = 1;
     layoutBindings[1].descriptorCount = 1;
     layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -337,7 +391,12 @@ void Engine::createDescriptorSetLayout() {
     layoutBindings[2].binding = 2;
     layoutBindings[2].descriptorCount = 1;
     layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    layoutBindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    // layoutBindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    layoutBindings[2].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
+    layoutBindings[3].binding = 3;
+    layoutBindings[3].descriptorCount = 1;
+    layoutBindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    layoutBindings[3].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
 
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
     descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -346,7 +405,7 @@ void Engine::createDescriptorSetLayout() {
     VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &descriptorSetLayout));
 }
 void Engine::createDescriptorPool() {
-    std::vector<VkDescriptorPoolSize> poolSizes(3);
+    std::vector<VkDescriptorPoolSize> poolSizes(4);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     // number of descriptors of a specific time
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
@@ -354,6 +413,8 @@ void Engine::createDescriptorPool() {
     poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSizes[2].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[3].descriptorCount = MAX_FRAMES_IN_FLIGHT;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -386,12 +447,17 @@ void Engine::createDescriptorSets() {
         imageInfo.imageView = textureImageView;
         imageInfo.sampler = textureSampler;
 
-        VkDescriptorBufferInfo verticesBufferInfo{};
-        verticesBufferInfo.buffer = vertexBuffer;
-        verticesBufferInfo.offset = 0;
-        verticesBufferInfo.range = sizeof(vertices[0])*vertices.size();
+        VkDescriptorBufferInfo vertexBufferInfo{};
+        vertexBufferInfo.buffer = vertexBuffer;
+        vertexBufferInfo.offset = 0;
+        vertexBufferInfo.range = sizeof(vertices[0])*vertices.size();
 
-        std::vector<VkWriteDescriptorSet> writeDescriptors(3);
+        VkDescriptorBufferInfo meshletBufferInfo{};
+        meshletBufferInfo.buffer = meshletBuffer;
+        meshletBufferInfo.offset = 0;
+        meshletBufferInfo.range = sizeof(meshlets[0])*meshlets.size();
+
+        std::vector<VkWriteDescriptorSet> writeDescriptors(4);
         writeDescriptors[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writeDescriptors[0].pBufferInfo = &bufferInfo;
         writeDescriptors[0].descriptorCount = 1; // in case the descriptor is an array
@@ -409,18 +475,27 @@ void Engine::createDescriptorSets() {
         writeDescriptors[1].dstArrayElement = 0;
 
         writeDescriptors[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeDescriptors[2].pBufferInfo = &verticesBufferInfo;
+        writeDescriptors[2].pBufferInfo = &vertexBufferInfo;
         writeDescriptors[2].descriptorCount = 1;
         writeDescriptors[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         writeDescriptors[2].dstSet = descriptorSets[i];
         writeDescriptors[2].dstBinding = 2;
         writeDescriptors[2].dstArrayElement = 0;
 
+        writeDescriptors[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writeDescriptors[3].pBufferInfo = &meshletBufferInfo;
+        writeDescriptors[3].descriptorCount = 1;
+        writeDescriptors[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writeDescriptors[3].dstSet = descriptorSets[i];
+        writeDescriptors[3].dstBinding = 3;
+        writeDescriptors[3].dstArrayElement = 0;
+
         vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
     }
 }
 void Engine::createGraphicsPipeline() {
-    auto vertCode = readFile("../shader.vert.spv");
+    // auto vertCode = readFile("../shader.vert.spv");
+    auto vertCode = readFile("../shader.mesh.spv");
     auto fragCode = readFile("../shader.frag.spv");
     VkShaderModule vertShaderModule;
     createShaderModule(vertShaderModule, vertCode);
@@ -431,7 +506,8 @@ void Engine::createGraphicsPipeline() {
     shaderStageInfos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     shaderStageInfos[0].module = vertShaderModule;
     shaderStageInfos[0].pName = "main";
-    shaderStageInfos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    // shaderStageInfos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shaderStageInfos[0].stage = VK_SHADER_STAGE_MESH_BIT_NV;
     shaderStageInfos[0].pSpecializationInfo = VK_NULL_HANDLE; // allows us to specify values for shader constants
     shaderStageInfos[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     shaderStageInfos[1].module = fragShaderModule;
@@ -762,6 +838,28 @@ void Engine::createIndexBuffer() {
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     copyBuffer(stagingBuffer, indexBuffer, indexBufferSize);
+
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
+}
+void Engine::createMeshletBuffer() {
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    VkDeviceSize meshletBufferSize = sizeof(meshlets[0])*meshlets.size();
+    createBuffer(stagingBuffer, stagingBufferMemory, meshletBufferSize, 
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+
+    void* data;
+    vkMapMemory(device, stagingBufferMemory, 0, meshletBufferSize, 0, &data);
+    memcpy(data, meshlets.data(), sizeof(meshlets[0])*meshlets.size());
+    vkUnmapMemory(device, stagingBufferMemory);
+
+    createBuffer(meshletBuffer, meshletBufferMemory, meshletBufferSize,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT| VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    copyBuffer(stagingBuffer, meshletBuffer, meshletBufferSize);
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingBufferMemory, nullptr);
@@ -1261,7 +1359,7 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
 
             vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
-            VkDeviceSize offset = {0};
+            // VkDeviceSize offset = {0};
             // this function is used to bind vertex buffer to bindings defined in graphics pipeline creation
             // vkCmdBindVertexBuffers(cmdBuffer, 0, 1, &vertexBuffer, &offset);
             vkCmdBindIndexBuffer(cmdBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
@@ -1280,7 +1378,9 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
 
             // vkCmdDraw(cmdBuffer, vertices.size(), 1, 0, 0);
-            vkCmdDrawIndexed(cmdBuffer, indices.size(), 1, 0, 0, 0);
+            // vkCmdDrawIndexed(cmdBuffer, indices.size(), 1, 0, 0, 0);
+            PFN_vkCmdDrawMeshTasksNV vkCmdDrawMeshTasksNV = (PFN_vkCmdDrawMeshTasksNV)vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksNV");
+            vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);
         }
         vkCmdEndRenderPass(cmdBuffer);
     }
