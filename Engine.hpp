@@ -16,9 +16,9 @@ struct SurfaceDetails {
 };
 
 struct Vertex {
-    float vx, vy, vz;
+    uint16_t vx, vy, vz;
     uint8_t nx, ny, nz, nw; // nw is only used for alignment
-    float tu, tv;
+    uint16_t tu, tv;
     // binding descriptions specify at which rate to load data
     static VkVertexInputBindingDescription getBindingDescription() {
         VkVertexInputBindingDescription binding{};
@@ -31,7 +31,7 @@ struct Vertex {
         std::array<VkVertexInputAttributeDescription, 3> attributes{};
         attributes[0].binding = 0; // which binding to take attribute from
         attributes[0].location = 0; // location referred in vertex shader as input, i.e layout(location=X)
-        attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributes[0].format = VK_FORMAT_R16G16B16_SFLOAT;
         attributes[0].offset = offsetof(Vertex, vx);
         attributes[1].binding = 0; 
         attributes[1].location = 1;
@@ -39,7 +39,7 @@ struct Vertex {
         attributes[1].offset = offsetof(Vertex, nx);
         attributes[2].binding = 0; 
         attributes[2].location = 2;
-        attributes[2].format = VK_FORMAT_R32G32_SFLOAT;
+        attributes[2].format = VK_FORMAT_R16G16_SFLOAT;
         attributes[2].offset = offsetof(Vertex, tu);
         return attributes;
     }

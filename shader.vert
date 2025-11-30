@@ -10,9 +10,9 @@ layout(set = 0, binding = 0) uniform MVP {
 } mvp;
 
 struct Vertex {
-    float vx, vy, vz;
+    float16_t vx, vy, vz;
     uint8_t nx, ny, nz, nw; // nw is only used for alignment
-    float tu, tv;
+    float16_t tu, tv;
 };
 layout (set = 0, binding = 2) readonly buffer Vertices {
     Vertex vertices[];

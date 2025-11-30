@@ -89,3 +89,10 @@ static std::vector<char> readFile(const std::string& filename) {
 
     return buffer;
 }
+
+inline uint16_t floatToHalf(float f) {
+    _Float16 h = (_Float16)f;
+    uint16_t res;
+    memcpy(&res, &h, sizeof(uint16_t));
+    return res;
+}

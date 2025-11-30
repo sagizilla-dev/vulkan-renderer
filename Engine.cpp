@@ -197,9 +197,9 @@ void Engine::loadModel() {
     for (const auto& shape : shapes) {
         for (const auto& index : shape.mesh.indices) {
             Vertex vertex{};
-            vertex.vx = attrib.vertices[3 * index.vertex_index + 0];
-            vertex.vy = attrib.vertices[3 * index.vertex_index + 1];
-            vertex.vz = attrib.vertices[3 * index.vertex_index + 2];
+            vertex.vx = floatToHalf(attrib.vertices[3 * index.vertex_index + 0]);
+            vertex.vy = floatToHalf(attrib.vertices[3 * index.vertex_index + 1]);
+            vertex.vz = floatToHalf(attrib.vertices[3 * index.vertex_index + 2]);
 
             glm::vec3 uncompressed = glm::vec3(0.0f, 0.0f, 0.0f);
             if (!attrib.normals.empty()) {
@@ -213,8 +213,8 @@ void Engine::loadModel() {
             vertex.nz = uint8_t((uncompressed[2]*0.5f + 0.5f)*255.0f);
 
             if (!attrib.texcoords.empty()) {
-                vertex.tu = attrib.texcoords[2 * index.texcoord_index + 0];
-                vertex.tv = 1.0f - attrib.texcoords[2 * index.texcoord_index + 1];
+                vertex.tu = floatToHalf(attrib.texcoords[2 * index.texcoord_index + 0]);
+                vertex.tv = floatToHalf(1.0f - attrib.texcoords[2 * index.texcoord_index + 1]);
             }
             
             if (uniqueVertices.count(vertex)==0) {
@@ -324,6 +324,10 @@ void Engine::createDevice() {
     VkPhysicalDeviceMaintenance4Features maintenanceFeatures{};
     maintenanceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES;
     maintenanceFeatures.maintenance4 = VK_TRUE;
+    VkPhysicalDeviceVulkan11Features features11{};
+    features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+    features11.storageBuffer16BitAccess = VK_TRUE;
+    maintenanceFeatures.pNext = &features11;
     meshFeatures.pNext = &maintenanceFeatures;
     features12.pNext = &meshFeatures;
     features.pNext = &features12;
