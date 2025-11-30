@@ -23,9 +23,9 @@
 
 #include <vulkan/vulkan.hpp>
 
-#include "stb_image.h"
+#include <stb_image.h>
 
-#include "tiny_obj_loader.h"
+#include <tiny_obj_loader.h>
 
 inline const char* vkResultToString(VkResult r) {
     switch (r) {
