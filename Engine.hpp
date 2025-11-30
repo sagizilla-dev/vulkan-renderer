@@ -171,8 +171,8 @@ private:
 
     const int MAX_FRAMES_IN_FLIGHT = 4;
     uint32_t currentFrame = 0;
-    const std::string MODEL_PATH = "../kitten.obj";
-    const std::string TEXTURE_PATH = "../viking_room.png";
+    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/kitten.obj";
+    const std::string TEXTURE_PATH = std::string(PROJECT_ROOT) + "/textures/viking_room.png";
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
         "VK_KHR_xcb_surface"

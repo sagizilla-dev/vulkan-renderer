@@ -565,9 +565,9 @@ void Engine::createDescriptorSets() {
     }
 }
 void Engine::createGraphicsPipeline() {
-    auto vertCode = readFile("../shader.vert.spv");
-    auto meshCode = readFile("../shader.mesh.spv");
-    auto fragCode = readFile("../shader.frag.spv");
+    auto vertCode = readFile(std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv");
+    auto meshCode = readFile(std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv");
+    auto fragCode = readFile(std::string(PROJECT_ROOT) + "/shaders/shader.frag.spv");
     VkShaderModule vertShaderModule;
     createShaderModule(vertShaderModule, vertCode);
     VkShaderModule meshShaderModule;
