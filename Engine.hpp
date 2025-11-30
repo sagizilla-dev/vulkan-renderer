@@ -1,5 +1,6 @@
 #pragma once
 #include "utils.hpp"
+#include "shaders.h"
 
 struct QueueFamilies {
     std::optional<uint32_t> graphicsFamily;
@@ -96,6 +97,7 @@ private:
     VkPipeline graphicsPipeline;
     VkPipeline meshGraphicsPipeline;
     VkDescriptorSetLayout descriptorSetLayout;
+    VkDescriptorUpdateTemplate descriptorUpdateTemplate;
     VkDescriptorPool descriptorPool;
     std::vector<VkDescriptorSet> descriptorSets;
     VkPipelineLayout pipelineLayout;
@@ -137,6 +139,7 @@ private:
     void createSwapchain();
     void createImageView(VkFormat format, VkImage& image, uint32_t mipLevels, VkImageAspectFlags aspectMask, VkImageView& imageView);
     void createDescriptorSetLayout();
+    void createDescriptorUpdateTemplate();
     void createDescriptorPool();
     void createDescriptorSets();
     void createGraphicsPipeline();

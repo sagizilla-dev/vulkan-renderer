@@ -5,6 +5,8 @@
 // this extension allows the use of 8-bit integer types for arithmetic operations
 #extension GL_EXT_shader_explicit_arithmetic_types: require
 
+#include "common.h"
+
 layout(local_size_x = 32) in;
 layout(triangles) out;
 // we use 126 primitives since hardware allocates primitive indices in 128 byte granularity and needs
@@ -19,26 +21,11 @@ layout(set = 0, binding = 0) uniform MVP {
     mat4 proj;
 } mvp;
 
-struct Vertex {
-    float16_t vx, vy, vz;
-    uint8_t nx, ny, nz, nw;
-    float16_t tu, tv;
-};
+
 layout(set = 0, binding = 2) readonly buffer Vertices {
     Vertex vertices[];
 };
 
-// double indexing is important here
-// having 126*3 uint32_t indices makes up for 126*3*4 = 1512 bytes
-// having 126*3 uint8_t sub indices and 64 uint32_t global indices make up for 126*3 + 64*4 = 634 bytes
-// another important feature of double indexing is vertex de duplication
-// meaning the global vertex at any index is stored only once in the vertex buffer
-struct Meshlet {
-    uint32_t vertices[64];
-    uint8_t indices[126*3];
-    uint8_t triangleCount;
-    uint8_t vertexCount;
-};
 layout(set = 0, binding = 3) readonly buffer Meshlets {
     Meshlet meshlets[];
 };

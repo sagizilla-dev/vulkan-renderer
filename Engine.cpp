@@ -32,12 +32,14 @@ Engine::Engine() {
     createIndexBuffer();
     createMeshletBuffer();
     createDescriptorSetLayout();
+    createDescriptorUpdateTemplate();
     createDescriptorPool();
     createDescriptorSets();
     createGraphicsPipeline();
     createQueryPools();
 }
 Engine::~Engine() {
+    vkDestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, nullptr);
     vkDestroyBuffer(device, meshletBuffer, nullptr);
     vkFreeMemory(device, meshletBufferMemory, nullptr);
     vkDestroySampler(device, textureSampler, nullptr);
@@ -466,6 +468,51 @@ void Engine::createDescriptorSetLayout() {
     descriptorSetLayoutInfo.pBindings = layoutBindings.data();
     VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &descriptorSetLayout));
 }
+void Engine::createDescriptorUpdateTemplate() {
+    VkDescriptorUpdateTemplateCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO;
+    info.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    info.descriptorSetLayout = descriptorSetLayout;
+    info.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET;
+    
+    std::vector<VkDescriptorUpdateTemplateEntry> entries(4);
+    entries[0].descriptorCount = 1; // in case the descriptor is an array
+    entries[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    entries[0].dstBinding = 0;
+    entries[0].dstArrayElement = 0;
+    // the next two fields specify how to map the data that is going to be updated
+    // since the function vkUpdateDescriptorSetWithTemplate() accepts void* data, we can specify our own
+    // data class to hold the data, so we need to provide details about it
+    entries[0].stride = sizeof(DescriptorInfo); // spacing between consecutive descriptors (same for all entries since array is tightly packed)
+    entries[0].offset = 0; // offset in the provided data array, used to find the correct descriptor data
+
+    entries[1].descriptorCount = 1;
+    entries[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    entries[1].dstBinding = 1;
+    entries[1].dstArrayElement = 0;
+    entries[1].stride = sizeof(DescriptorInfo);
+    entries[1].offset = sizeof(DescriptorInfo);
+
+    entries[2].descriptorCount = 1;
+    entries[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    entries[2].dstBinding = 2;
+    entries[2].dstArrayElement = 0;
+    entries[2].stride = sizeof(DescriptorInfo);
+    entries[2].offset = sizeof(DescriptorInfo)*2;
+
+    entries[3].descriptorCount = 1;
+    entries[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    entries[3].dstBinding = 3;
+    entries[3].dstArrayElement = 0;
+    entries[3].stride = sizeof(DescriptorInfo);
+    entries[3].offset = sizeof(DescriptorInfo)*3;
+
+    info.descriptorUpdateEntryCount = entries.size();
+    info.pDescriptorUpdateEntries = entries.data();
+    info.set = 0;
+
+    VK_CHECK(vkCreateDescriptorUpdateTemplate(device, &info, nullptr, &descriptorUpdateTemplate));
+}
 void Engine::createDescriptorPool() {
     std::vector<VkDescriptorPoolSize> poolSizes(4);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -499,60 +546,22 @@ void Engine::createDescriptorSets() {
 
     // bind the actual data to descriptor sets
     for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
-        VkDescriptorBufferInfo bufferInfo{};
-        bufferInfo.buffer = uniformBuffers[i];
-        bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(MVP);
-        
-        VkDescriptorImageInfo imageInfo{};
-        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        imageInfo.imageView = textureImageView;
-        imageInfo.sampler = textureSampler;
+        std::vector<DescriptorInfo> data(4);
+        data[0].bufferInfo.buffer = uniformBuffers[i];
+        data[0].bufferInfo.offset = 0;
+        data[0].bufferInfo.range = sizeof(MVP);
+        data[1].imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        data[1].imageInfo.imageView = textureImageView;
+        data[1].imageInfo.sampler = textureSampler;
+        data[2].bufferInfo.buffer = vertexBuffer;
+        data[2].bufferInfo.offset = 0;
+        data[2].bufferInfo.range = sizeof(vertices[0])*vertices.size();
+        data[3].bufferInfo.buffer = meshletBuffer;
+        data[3].bufferInfo.offset = 0;
+        data[3].bufferInfo.range = sizeof(meshlets[0])*meshlets.size();
 
-        VkDescriptorBufferInfo vertexBufferInfo{};
-        vertexBufferInfo.buffer = vertexBuffer;
-        vertexBufferInfo.offset = 0;
-        vertexBufferInfo.range = sizeof(vertices[0])*vertices.size();
-
-        VkDescriptorBufferInfo meshletBufferInfo{};
-        meshletBufferInfo.buffer = meshletBuffer;
-        meshletBufferInfo.offset = 0;
-        meshletBufferInfo.range = sizeof(meshlets[0])*meshlets.size();
-
-        std::vector<VkWriteDescriptorSet> writeDescriptors(4);
-        writeDescriptors[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeDescriptors[0].pBufferInfo = &bufferInfo;
-        writeDescriptors[0].descriptorCount = 1; // in case the descriptor is an array
-        writeDescriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        writeDescriptors[0].dstSet = descriptorSets[i];
-        writeDescriptors[0].dstBinding = 0;
-        writeDescriptors[0].dstArrayElement = 0;
-
-        writeDescriptors[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeDescriptors[1].pImageInfo = &imageInfo;
-        writeDescriptors[1].descriptorCount = 1;
-        writeDescriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writeDescriptors[1].dstSet = descriptorSets[i];
-        writeDescriptors[1].dstBinding = 1;
-        writeDescriptors[1].dstArrayElement = 0;
-
-        writeDescriptors[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeDescriptors[2].pBufferInfo = &vertexBufferInfo;
-        writeDescriptors[2].descriptorCount = 1;
-        writeDescriptors[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writeDescriptors[2].dstSet = descriptorSets[i];
-        writeDescriptors[2].dstBinding = 2;
-        writeDescriptors[2].dstArrayElement = 0;
-
-        writeDescriptors[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writeDescriptors[3].pBufferInfo = &meshletBufferInfo;
-        writeDescriptors[3].descriptorCount = 1;
-        writeDescriptors[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writeDescriptors[3].dstSet = descriptorSets[i];
-        writeDescriptors[3].dstBinding = 3;
-        writeDescriptors[3].dstArrayElement = 0;
-
-        vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
+        // vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
+        vkUpdateDescriptorSetWithTemplate(device, descriptorSets[i], descriptorUpdateTemplate, data.data());
     }
 }
 void Engine::createGraphicsPipeline() {
@@ -1443,6 +1452,7 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             else
                 vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
+            // firstSet refers to the descriptor set layout, i.e. layout(set = X, binding = Y)
             vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
             // VkDeviceSize offset = {0};
