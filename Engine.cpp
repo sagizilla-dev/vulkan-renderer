@@ -225,6 +225,21 @@ void Engine::loadModel() {
             indices.push_back(uniqueVertices[vertex]);
         }
     }
+    // geometry optimization here is pretty important
+    // first of all, we need to reorder indices inside the index buffer
+    // so that consecutive triangles share vertices
+    // this maximizes vertex cache efficiency, i.e.
+    // vertices that have already been transformed are stored, 
+    // retrieval doesn't cost us anything
+    // secondly, we need o reorder vertex buffer
+    // so that vertices that are accessed one after another are stored
+    // close to each other
+    // this maximizes memory locality and global memory coalescing
+    
+    // overall, bigger meshlets = fewer unique vertices per meshlet = fewer shader invocations
+    // it is important to build meshlets in a way that maximize the number of triangles per meshlets,
+    // not vertices per meshlets
+    // otherwise we end up with scatterred triangles belonging to the same meshlet
 }
 void Engine::createMeshlets() {
     Meshlet meshlet = {};
