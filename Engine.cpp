@@ -5,6 +5,10 @@
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
         glfwSetWindowShouldClose(window, true);
+    if (key == GLFW_KEY_M && action == GLFW_PRESS) {
+        Engine* eng = (Engine*)glfwGetWindowUserPointer(window);
+        eng->meshShadersEnabled = !eng->meshShadersEnabled;
+    }
 }
 
 Engine::Engine() {
@@ -106,8 +110,8 @@ void Engine::run() {
                 // output stats every 30 frames
                 if (frameCounter % 30 == 0) {
                     char title[256];
-                    snprintf(title, sizeof(title), "GPU Time: %.3f ms (%.1f FPS), %i", 
-                             gpuTimeMs, 1000.0f / gpuTimeMs, meshlets.size());
+                    snprintf(title, sizeof(title), "GPU Time: %.3f ms (%.1f FPS), %i meshlets, %i vertices", 
+                             gpuTimeMs, 1000.0f / gpuTimeMs, int(meshlets.size()), int(vertices.size()));
                     glfwSetWindowTitle(window, title);
                 }
             }
@@ -178,6 +182,7 @@ void Engine::createWindow() {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     window = glfwCreateWindow(800, 600, "Vulkan window", nullptr, nullptr);
     glfwSetKeyCallback(window, keyCallback);
+    glfwSetWindowUserPointer(window, this);
 }
 void Engine::loadModel() {
     tinyobj::attrib_t attrib;
@@ -421,8 +426,7 @@ void Engine::createDescriptorSetLayout() {
     layoutBindings[0].binding = 0; // referenced in the shader as layout(binding = X)
     layoutBindings[0].descriptorCount = 1; // descriptor can be an array
     layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    // layoutBindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    layoutBindings[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
+    layoutBindings[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV | VK_SHADER_STAGE_VERTEX_BIT;
     layoutBindings[1].binding = 1;
     layoutBindings[1].descriptorCount = 1;
     layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -430,8 +434,7 @@ void Engine::createDescriptorSetLayout() {
     layoutBindings[2].binding = 2;
     layoutBindings[2].descriptorCount = 1;
     layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    // layoutBindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    layoutBindings[2].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
+    layoutBindings[2].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV | VK_SHADER_STAGE_VERTEX_BIT;
     layoutBindings[3].binding = 3;
     layoutBindings[3].descriptorCount = 1;
     layoutBindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -533,11 +536,13 @@ void Engine::createDescriptorSets() {
     }
 }
 void Engine::createGraphicsPipeline() {
-    // auto vertCode = readFile("../shader.vert.spv");
-    auto vertCode = readFile("../shader.mesh.spv");
+    auto vertCode = readFile("../shader.vert.spv");
+    auto meshCode = readFile("../shader.mesh.spv");
     auto fragCode = readFile("../shader.frag.spv");
     VkShaderModule vertShaderModule;
     createShaderModule(vertShaderModule, vertCode);
+    VkShaderModule meshShaderModule;
+    createShaderModule(meshShaderModule, meshCode);
     VkShaderModule fragShaderModule;
     createShaderModule(fragShaderModule, fragCode);
     
@@ -545,8 +550,7 @@ void Engine::createGraphicsPipeline() {
     shaderStageInfos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     shaderStageInfos[0].module = vertShaderModule;
     shaderStageInfos[0].pName = "main";
-    // shaderStageInfos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    shaderStageInfos[0].stage = VK_SHADER_STAGE_MESH_BIT_NV;
+    shaderStageInfos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
     shaderStageInfos[0].pSpecializationInfo = VK_NULL_HANDLE; // allows us to specify values for shader constants
     shaderStageInfos[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     shaderStageInfos[1].module = fragShaderModule;
@@ -652,10 +656,14 @@ void Engine::createGraphicsPipeline() {
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // in case we want to derive a pipeline from another one
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline));
+    shaderStageInfos[0].stage = VK_SHADER_STAGE_MESH_BIT_NV;
+    shaderStageInfos[0].module = meshShaderModule;
+    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &meshGraphicsPipeline));
 
     // we can delete shader module right away since compilation and
     // linking of shaders are done when pipeline is created
     vkDestroyShaderModule(device, vertShaderModule, nullptr);
+    vkDestroyShaderModule(device, meshShaderModule, nullptr);
     vkDestroyShaderModule(device, fragShaderModule, nullptr);
 }
 void Engine::createShaderModule(VkShaderModule& shaderModule, const std::vector<char>& code) {
@@ -1410,7 +1418,10 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
         // VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS means the render pass commands will be executed from secondary command buffer
         vkCmdBeginRenderPass(cmdBuffer, &renderpassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
         {
-            vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+            if (meshShadersEnabled)
+                vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshGraphicsPipeline);
+            else
+                vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
             vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
@@ -1432,10 +1443,11 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             scissor.offset = {0, 0};
             vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
 
-            // vkCmdDraw(cmdBuffer, vertices.size(), 1, 0, 0);
-            // vkCmdDrawIndexed(cmdBuffer, indices.size(), 1, 0, 0, 0);
             PFN_vkCmdDrawMeshTasksNV vkCmdDrawMeshTasksNV = (PFN_vkCmdDrawMeshTasksNV)vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksNV");
-            vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);
+            if (meshShadersEnabled)
+                vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);
+            else
+                vkCmdDrawIndexed(cmdBuffer, indices.size(), 1, 0, 0, 0);
         }
         vkCmdEndRenderPass(cmdBuffer);
         vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPools[currentFrame], 1);

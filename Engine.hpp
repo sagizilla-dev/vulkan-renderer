@@ -76,6 +76,8 @@ public:
     Engine();
     ~Engine();
     void run();
+
+    bool meshShadersEnabled = VK_FALSE;
 private:
     GLFWwindow* window = nullptr;
     VkInstance instance;
@@ -92,6 +94,7 @@ private:
     std::vector<VkImage> swapchainImages;
     std::vector<VkImageView> swapchainImageViews;
     VkPipeline graphicsPipeline;
+    VkPipeline meshGraphicsPipeline;
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorPool descriptorPool;
     std::vector<VkDescriptorSet> descriptorSets;
@@ -165,7 +168,7 @@ private:
 
     const int MAX_FRAMES_IN_FLIGHT = 4;
     uint32_t currentFrame = 0;
-    const std::string MODEL_PATH = "../viking_room.obj";
+    const std::string MODEL_PATH = "../kitten.obj";
     const std::string TEXTURE_PATH = "../viking_room.png";
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
