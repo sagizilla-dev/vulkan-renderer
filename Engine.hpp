@@ -123,6 +123,7 @@ private:
     std::vector<uint32_t> indices;
     std::vector<Meshlet> meshlets;
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
+    std::vector<VkQueryPool> queryPools;
 
     void createWindow();
     void loadModel();
@@ -159,6 +160,7 @@ private:
     void createTextureSampler();
     void createDepthBuffer();
     void createColorBuffer();
+    void createQueryPools();
     VkFormat findDepthFormat();
 
     const int MAX_FRAMES_IN_FLIGHT = 4;

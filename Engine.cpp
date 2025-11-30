@@ -31,6 +31,7 @@ Engine::Engine() {
     createDescriptorPool();
     createDescriptorSets();
     createGraphicsPipeline();
+    createQueryPools();
 }
 Engine::~Engine() {
     vkDestroyBuffer(device, meshletBuffer, nullptr);
@@ -42,6 +43,7 @@ Engine::~Engine() {
     for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroyBuffer(device, uniformBuffers[i], nullptr);
         vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
+        vkDestroyQueryPool(device, queryPools[i], nullptr);
     }
     vkDestroyBuffer(device, indexBuffer, nullptr);
     vkFreeMemory(device, indexBufferMemory, nullptr);
@@ -73,11 +75,43 @@ void Engine::run() {
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) createFence(cmdBufferReady[i]);
     std::vector<VkCommandBuffer> cmdBuffer(MAX_FRAMES_IN_FLIGHT);
     createCommandBuffer(cmdBuffer.data(), MAX_FRAMES_IN_FLIGHT, graphicsCmdPool);
+
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(pDevice, &props);
+    // timestampPeriod is the number of nanoseconds required for a timestamp query to be incremented by 1
+    float timestampPeriod = props.limits.timestampPeriod;
+    int frameCounter = 0;
+    
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
         // wait until command buffer is ready to be rerecorded
         vkWaitForFences(device, 1, &cmdBufferReady[currentFrame], VK_TRUE, ~0ull);
+
+        if (frameCounter >= MAX_FRAMES_IN_FLIGHT) {
+            uint64_t timestamps[2];
+            // get the result of timestamp queries
+            // only works successfully if the queries were reset before using them
+            VkResult result = vkGetQueryPoolResults(
+                device, queryPools[currentFrame],
+                0, 2,
+                sizeof(timestamps), timestamps,
+                sizeof(uint64_t),
+                VK_QUERY_RESULT_64_BIT
+            );
+            
+            if (result == VK_SUCCESS) {
+                uint64_t delta = timestamps[1] - timestamps[0];
+                float gpuTimeMs = (delta * timestampPeriod) / 1000000.0f;
+                // output stats every 30 frames
+                if (frameCounter % 30 == 0) {
+                    char title[256];
+                    snprintf(title, sizeof(title), "GPU Time: %.3f ms (%.1f FPS), %i", 
+                             gpuTimeMs, 1000.0f / gpuTimeMs, meshlets.size());
+                    glfwSetWindowTitle(window, title);
+                }
+            }
+        }
         
         uint32_t imageIndex;
         // get the next available image from the swapchain, store the image index in imageIndex
@@ -131,8 +165,9 @@ void Engine::run() {
         }
 
         currentFrame = (currentFrame+1) % MAX_FRAMES_IN_FLIGHT;
+        frameCounter++;
     }
-    vkDeviceWaitIdle(device);
+    vkDeviceWaitIdle(device); // wait until all GPU operations are done so that it's safe to destroy objects
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) destroySemaphore(imageAvailable[i]);
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) destroySemaphore(renderDone[i]);
     for (int i = 0; i<MAX_FRAMES_IN_FLIGHT; i++) destroyFence(cmdBufferReady[i]);
@@ -160,17 +195,21 @@ void Engine::loadModel() {
             vertex.vy = attrib.vertices[3 * index.vertex_index + 1];
             vertex.vz = attrib.vertices[3 * index.vertex_index + 2];
 
-            glm::vec3 uncompressed;
-            uncompressed[0] = attrib.normals[3 * index.normal_index + 0];
-            uncompressed[1] = attrib.normals[3 * index.normal_index + 1];
-            uncompressed[2] = attrib.normals[3 * index.normal_index + 2];
+            glm::vec3 uncompressed = glm::vec3(0.0f, 0.0f, 0.0f);
+            if (!attrib.normals.empty()) {
+                uncompressed[0] = attrib.normals[3 * index.normal_index + 0];
+                uncompressed[1] = attrib.normals[3 * index.normal_index + 1];
+                uncompressed[2] = attrib.normals[3 * index.normal_index + 2];
+            }
             uncompressed = glm::normalize(uncompressed); // now the normal vector is between -1 and 1
             vertex.nx = uint8_t((uncompressed[0]*0.5f + 0.5f)*255.0f); // now the vector is within [0, 255]
             vertex.ny = uint8_t((uncompressed[1]*0.5f + 0.5f)*255.0f);
             vertex.nz = uint8_t((uncompressed[2]*0.5f + 0.5f)*255.0f);
 
-            vertex.tu = attrib.texcoords[2 * index.texcoord_index + 0];
-            vertex.tv = 1.0f - attrib.texcoords[2 * index.texcoord_index + 1];
+            if (!attrib.texcoords.empty()) {
+                vertex.tu = attrib.texcoords[2 * index.texcoord_index + 0];
+                vertex.tv = 1.0f - attrib.texcoords[2 * index.texcoord_index + 1];
+            }
             
             if (uniqueVertices.count(vertex)==0) {
                 uniqueVertices[vertex] = vertices.size();
@@ -1002,6 +1041,18 @@ void Engine::createColorBuffer() {
     createImageView(swapchainFormat, colorBuffer, 1, VK_IMAGE_ASPECT_COLOR_BIT, colorBufferImageView);
     transitionImageLayout(colorBuffer, swapchainFormat, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL); 
 }
+void Engine::createQueryPools() {
+    queryPools.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
+        // need to create query pools for every frame in flight since queries might be 
+        // in use while CPU is already processing the next frame
+        VkQueryPoolCreateInfo poolInfo{};
+        poolInfo.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        poolInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        poolInfo.queryCount = 2; // for each query pool we need 2 queries - for start and finish
+        VK_CHECK(vkCreateQueryPool(device, &poolInfo, nullptr, &queryPools[i]));
+    }   
+}
 VkFormat Engine::findDepthFormat() {
     std::vector<VkFormat> formats = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT};
     for (const auto& format: formats) {
@@ -1341,6 +1392,9 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
     beginInfo.pInheritanceInfo = nullptr;
     VK_CHECK(vkBeginCommandBuffer(cmdBuffer, &beginInfo));
     {
+        vkCmdResetQueryPool(cmdBuffer, queryPools[currentFrame], 0, 2);
+        vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPools[currentFrame], 0);
+
         VkRenderPassBeginInfo renderpassBeginInfo{};
         renderpassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         renderpassBeginInfo.renderPass = renderpass;
@@ -1384,6 +1438,7 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);
         }
         vkCmdEndRenderPass(cmdBuffer);
+        vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPools[currentFrame], 1);
     }
     vkEndCommandBuffer(cmdBuffer);
 }
