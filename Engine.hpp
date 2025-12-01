@@ -143,7 +143,7 @@ private:
     void createDescriptorPool();
     void createDescriptorSets();
     void createGraphicsPipeline();
-    void createShaderModule(VkShaderModule& shaderModule, const std::vector<char>& code);
+    void createShader(Shader& shader, const std::vector<char>& code);
     void createRenderpass();
     void createFramebuffers();
     void createCommandPool(VkCommandPool& cmdPool, VkCommandPoolCreateFlags flags, uint32_t queueFamily);
@@ -201,6 +201,7 @@ private:
     VkSampleCountFlagBits getMaxSampleCount();
     VkCommandBuffer beginRecording(VkCommandPool& cmdPool);
     void stopRecording(VkCommandBuffer& cmdBuffer, VkCommandPool& cmdPool);
+    void parseShader(Shader& shader, const uint32_t* spirv, uint32_t codeSize);
     void updateMVP();
 
     void recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex);

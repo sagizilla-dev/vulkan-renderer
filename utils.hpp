@@ -22,6 +22,7 @@
 #include <GLFW/glfw3.h>
 
 #include <vulkan/vulkan.hpp>
+#include <spirv/unified1/spirv.h>
 
 #include <stb_image.h>
 

@@ -568,21 +568,21 @@ void Engine::createGraphicsPipeline() {
     auto vertCode = readFile(std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv");
     auto meshCode = readFile(std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv");
     auto fragCode = readFile(std::string(PROJECT_ROOT) + "/shaders/shader.frag.spv");
-    VkShaderModule vertShaderModule;
-    createShaderModule(vertShaderModule, vertCode);
-    VkShaderModule meshShaderModule;
-    createShaderModule(meshShaderModule, meshCode);
-    VkShaderModule fragShaderModule;
-    createShaderModule(fragShaderModule, fragCode);
+    Shader vertexShader{};
+    createShader(vertexShader, vertCode);
+    Shader meshShader{};
+    createShader(meshShader, meshCode);
+    Shader fragShader{};
+    createShader(fragShader, fragCode);
     
     std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(2);
     shaderStageInfos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStageInfos[0].module = vertShaderModule;
+    shaderStageInfos[0].module = vertexShader.module;
     shaderStageInfos[0].pName = "main";
     shaderStageInfos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
     shaderStageInfos[0].pSpecializationInfo = VK_NULL_HANDLE; // allows us to specify values for shader constants
     shaderStageInfos[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStageInfos[1].module = fragShaderModule;
+    shaderStageInfos[1].module = fragShader.module;
     shaderStageInfos[1].pName = "main";
     shaderStageInfos[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     shaderStageInfos[1].pSpecializationInfo = VK_NULL_HANDLE;
@@ -686,21 +686,23 @@ void Engine::createGraphicsPipeline() {
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline));
     shaderStageInfos[0].stage = VK_SHADER_STAGE_MESH_BIT_NV;
-    shaderStageInfos[0].module = meshShaderModule;
+    shaderStageInfos[0].module = meshShader.module;
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &meshGraphicsPipeline));
 
     // we can delete shader module right away since compilation and
     // linking of shaders are done when pipeline is created
-    vkDestroyShaderModule(device, vertShaderModule, nullptr);
-    vkDestroyShaderModule(device, meshShaderModule, nullptr);
-    vkDestroyShaderModule(device, fragShaderModule, nullptr);
+    vkDestroyShaderModule(device, vertexShader.module, nullptr);
+    vkDestroyShaderModule(device, fragShader.module, nullptr);
+    vkDestroyShaderModule(device, meshShader.module, nullptr);
 }
-void Engine::createShaderModule(VkShaderModule& shaderModule, const std::vector<char>& code) {
+void Engine::createShader(Shader& shader, const std::vector<char>& code) {
+    parseShader(shader, reinterpret_cast<const uint32_t*>(code.data()), code.size());
+
     VkShaderModuleCreateInfo shaderModuleInfo{};
     shaderModuleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     shaderModuleInfo.codeSize = code.size();
     shaderModuleInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
-    VK_CHECK(vkCreateShaderModule(device, &shaderModuleInfo, nullptr, &shaderModule));
+    VK_CHECK(vkCreateShaderModule(device, &shaderModuleInfo, nullptr, &shader.module));
 }
 void Engine::createRenderpass() {
     // all attachments, i.e color, depth, etc, are passed from the framebuffer in
@@ -1402,6 +1404,24 @@ void Engine::stopRecording(VkCommandBuffer& cmdBuffer, VkCommandPool& cmdPool) {
     vkWaitForFences(device, 1, &fence, VK_TRUE, ~0ull);
     destroyFence(fence);
     vkFreeCommandBuffers(device, cmdPool, 1, &cmdBuffer);
+}
+void Engine::parseShader(Shader& shader, const uint32_t* spirv, uint32_t codeSize) {
+    assert(spirv[0]==SpvMagicNumber);
+
+    uint32_t idBound = spirv[3];
+
+    const uint32_t* instr = spirv+5;
+    while (instr < spirv + codeSize) {
+        uint16_t opCode = uint16_t(*instr & 0xffff);
+        uint16_t wordCount = uint16_t(*instr >> 16);
+        switch (opCode) {
+            case SpvOpEntryPoint: {
+                shader.stage = Shader::getShaderStage(SpvExecutionModel(instr[1]));
+                break;
+            };
+        }
+        instr+=wordCount;
+    }
 }
 void Engine::updateMVP() {
     static auto startTime = std::chrono::high_resolution_clock::now();
