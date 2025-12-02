@@ -565,19 +565,17 @@ void Engine::createDescriptorSets() {
     }
 }
 void Engine::createGraphicsPipeline() {
-    auto vertCode = readFile(std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv");
-    auto meshCode = readFile(std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv");
-    auto fragCode = readFile(std::string(PROJECT_ROOT) + "/shaders/shader.frag.spv");
-    Shader vertexShader{};
-    createShader(vertexShader, vertCode);
+    Shader vertShader{};
+    // this function creates shader module and parses SPIR-V to extract information like shader stage
+    createShader(vertShader, std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv");
     Shader meshShader{};
-    createShader(meshShader, meshCode);
+    createShader(meshShader, std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv");
     Shader fragShader{};
-    createShader(fragShader, fragCode);
+    createShader(fragShader, std::string(PROJECT_ROOT) + "/shaders/shader.frag.spv");
     
     std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(2);
     shaderStageInfos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStageInfos[0].module = vertexShader.module;
+    shaderStageInfos[0].module = vertShader.module;
     shaderStageInfos[0].pName = "main";
     shaderStageInfos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
     shaderStageInfos[0].pSpecializationInfo = VK_NULL_HANDLE; // allows us to specify values for shader constants
@@ -691,17 +689,29 @@ void Engine::createGraphicsPipeline() {
 
     // we can delete shader module right away since compilation and
     // linking of shaders are done when pipeline is created
-    vkDestroyShaderModule(device, vertexShader.module, nullptr);
+    vkDestroyShaderModule(device, vertShader.module, nullptr);
     vkDestroyShaderModule(device, fragShader.module, nullptr);
     vkDestroyShaderModule(device, meshShader.module, nullptr);
 }
-void Engine::createShader(Shader& shader, const std::vector<char>& code) {
-    parseShader(shader, reinterpret_cast<const uint32_t*>(code.data()), code.size());
+void Engine::createShader(Shader& shader, std::string path) {
+    auto bytes = readFile(path);
+    // spirv is read as a vector of bytes (char), so we need to convert it
+    // to a vector of words (std::vector<uint32_t>, so 4 bytes per word)
+    uint32_t wordCount = bytes.size()/4;
+    std::vector<uint32_t> byteCode(wordCount);
+    memcpy(byteCode.data(), bytes.data(), bytes.size());
+    shader.code = byteCode;
+    shader.codeSize = bytes.size();
 
+    parseSPIRV(shader);
+
+    createShaderModule(shader);
+}
+void Engine::createShaderModule(Shader& shader) {
     VkShaderModuleCreateInfo shaderModuleInfo{};
     shaderModuleInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    shaderModuleInfo.codeSize = code.size();
-    shaderModuleInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+    shaderModuleInfo.codeSize = shader.codeSize; // size in bytes
+    shaderModuleInfo.pCode = shader.code.data(); // must be an array of uint32_t
     VK_CHECK(vkCreateShaderModule(device, &shaderModuleInfo, nullptr, &shader.module));
 }
 void Engine::createRenderpass() {
@@ -1405,15 +1415,18 @@ void Engine::stopRecording(VkCommandBuffer& cmdBuffer, VkCommandPool& cmdPool) {
     destroyFence(fence);
     vkFreeCommandBuffers(device, cmdPool, 1, &cmdBuffer);
 }
-void Engine::parseShader(Shader& shader, const uint32_t* spirv, uint32_t codeSize) {
+void Engine::parseSPIRV(Shader& shader) {
+    uint32_t* spirv = shader.code.data();
+    uint32_t codeSize = shader.codeSize/4; // code size in words
+    
     assert(spirv[0]==SpvMagicNumber);
 
-    uint32_t idBound = spirv[3];
-
+    // uint32_t idBound = spirv[3];
+    // actual instructions start at word 6
     const uint32_t* instr = spirv+5;
     while (instr < spirv + codeSize) {
         uint16_t opCode = uint16_t(*instr & 0xffff);
-        uint16_t wordCount = uint16_t(*instr >> 16);
+        uint16_t wordCount = uint16_t(*instr >> 16); // number of words in the instruction
         switch (opCode) {
             case SpvOpEntryPoint: {
                 shader.stage = Shader::getShaderStage(SpvExecutionModel(instr[1]));

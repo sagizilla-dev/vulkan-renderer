@@ -1,6 +1,5 @@
 #pragma once
 #include "utils.hpp"
-#include "shaders.h"
 
 struct QueueFamilies {
     std::optional<uint32_t> graphicsFamily;
@@ -70,6 +69,37 @@ struct MVP {
     glm::mat4 model;
     glm::mat4 view;
     glm::mat4 proj;
+};
+
+struct Shader {
+    VkShaderModule module;
+    VkShaderStageFlags stage;
+    std::vector<uint32_t> code; // vector of words (1 word = uint32_t = 4 bytes)
+    uint32_t codeSize; // size in bytes
+    static VkShaderStageFlags getShaderStage(SpvExecutionModel executionModel) {
+        switch (executionModel) {
+            case SpvExecutionModelVertex: {
+                return VK_SHADER_STAGE_VERTEX_BIT;
+            }; 
+            case SpvExecutionModelFragment: {
+                return VK_SHADER_STAGE_FRAGMENT_BIT;
+            }; 
+            case SpvExecutionModelMeshNV: {
+                return VK_SHADER_STAGE_MESH_BIT_NV;
+            };
+            default: {
+                throw std::runtime_error("Cannot map the SPIR-V execution model bytecode to shader stage");
+            };
+        }
+    }
+};
+
+// this struct is only used to provide data for descriptor update template
+struct DescriptorInfo {
+    union {
+        VkDescriptorImageInfo imageInfo;
+        VkDescriptorBufferInfo bufferInfo;
+    };
 };
 
 class Engine {
@@ -143,7 +173,8 @@ private:
     void createDescriptorPool();
     void createDescriptorSets();
     void createGraphicsPipeline();
-    void createShader(Shader& shader, const std::vector<char>& code);
+    void createShader(Shader& shader, std::string path);
+    void createShaderModule(Shader& shader);
     void createRenderpass();
     void createFramebuffers();
     void createCommandPool(VkCommandPool& cmdPool, VkCommandPoolCreateFlags flags, uint32_t queueFamily);
@@ -201,7 +232,7 @@ private:
     VkSampleCountFlagBits getMaxSampleCount();
     VkCommandBuffer beginRecording(VkCommandPool& cmdPool);
     void stopRecording(VkCommandBuffer& cmdBuffer, VkCommandPool& cmdPool);
-    void parseShader(Shader& shader, const uint32_t* spirv, uint32_t codeSize);
+    void parseSPIRV(Shader& shader);
     void updateMVP();
 
     void recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex);
