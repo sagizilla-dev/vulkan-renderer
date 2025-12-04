@@ -1474,7 +1474,7 @@ void Engine::parseSPIRV(Shader& shader) {
                 // word 1: result ID
                 // word 2: storage class
                 // word 3: target ID of the data struct
-                // i.e declare a new pointer located in X storage class pointing to Y data struct
+                // i.e declare a new pointer pointing to Y data struct located in X storage class
                 if (wordCount >= 4) {
                     uint32_t resultId = instr[1];
                     uint32_t storageClass = instr[2];
@@ -1510,26 +1510,27 @@ void Engine::parseSPIRV(Shader& shader) {
                         
                         // check if we have already decorated this variable
                         if (descriptorSetDecorations.count(resultId) && descriptorBindingDecorations.count(resultId)) {
-                            DescriptorResourceInfo desc{};
-                            desc.set = descriptorSetDecorations[resultId];
-                            desc.binding = descriptorBindingDecorations[resultId];
-                            desc.type = descriptorTypes.count(typeId) ? 
-                                        descriptorTypes[typeId] : 
-                                        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                            desc.descriptorCount = 1;
-                            desc.name = names.count(resultId) ? names[resultId] : "";
+                            DescriptorResourceInfo descriptorResourceInfo{};
+                            // as per SPIR-V specs, by the time we hit OpVariable, all decorations must have been processed
+                            descriptorResourceInfo.set = descriptorSetDecorations[resultId];
+                            descriptorResourceInfo.binding = descriptorBindingDecorations[resultId];
+                            // as per SPIR-V specs OpVariable and OpTypePointer are in the same section, so there is actually
+                            // a chance descriptor type for the 
+                            descriptorResourceInfo.type = descriptorTypes[typeId];
+                            descriptorResourceInfo.descriptorCount = 1;
+                            descriptorResourceInfo.name = names[resultId];
                             
-                            // it is assumed OpEntryPoint instruction has been reached before OpVariable as per SPIR-V specs
-                            desc.stage = shader.stage;
+                            // as per SPIR-V specs pEntryPoint instruction has been reached before OpVariable 
+                            descriptorResourceInfo.stage = shader.stage;
 
                             // in case there is another shader that has already defined a descriptor of the same binding 
                             // in the same set, just add additional shader stage to the one already stored
-                            auto res = descriptorResourceInfos.insert(desc);
+                            auto res = descriptorResourceInfos.insert(descriptorResourceInfo);
                             if (!res.second) {
                                 DescriptorResourceInfo existingResource = *res.first;
-                                desc.stage |= existingResource.stage;
+                                descriptorResourceInfo.stage |= existingResource.stage;
                                 descriptorResourceInfos.erase(res.first);
-                                descriptorResourceInfos.insert(desc);
+                                descriptorResourceInfos.insert(descriptorResourceInfo);
                             }
                         }
                     }
