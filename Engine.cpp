@@ -495,16 +495,14 @@ void Engine::createDescriptorUpdateTemplate() {
     VK_CHECK(vkCreateDescriptorUpdateTemplate(device, &info, nullptr, &descriptorUpdateTemplate));
 }
 void Engine::createDescriptorPool() {
-    std::vector<VkDescriptorPoolSize> poolSizes(4);
+    std::vector<VkDescriptorPoolSize> poolSizes(3);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     // number of descriptors of a specific time
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[2].descriptorCount = MAX_FRAMES_IN_FLIGHT;
-    poolSizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[3].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[2].descriptorCount = MAX_FRAMES_IN_FLIGHT*2;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1441,7 +1439,7 @@ void Engine::parseSPIRV(Shader& shader) {
                 // word 1: target ID
                 // word 2: name
                 uint32_t targetId = instr[1];
-                names[targetId] = std::to_string(instr[2]);
+                names[targetId] = reinterpret_cast<const char*>(&instr[2]);
                 break;
             }
             
