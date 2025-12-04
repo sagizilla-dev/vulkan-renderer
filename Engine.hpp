@@ -71,31 +71,32 @@ struct MVP {
     glm::mat4 proj;
 };
 
-struct Shader {
-    VkShaderModule module;
+// this struct holds data extracted from the SPIR-V
+struct DescriptorResourceInfo {
+    uint32_t set; // which set the descriptor belongs to
+    uint32_t binding; // which binding the descriptor is tied to
+    VkDescriptorType type; // type of the descriptor
+    uint32_t descriptorCount; // number of descriptors in the array (if it is an array)
+    std::string name;
+    // since Mesh shader and Vertex shader contain exactly the same descriptors, it is possible
+    // to put them into the same struct but define multiple stages
     VkShaderStageFlags stage;
-    std::vector<uint32_t> code; // vector of words (1 word = uint32_t = 4 bytes)
-    uint32_t codeSize; // size in bytes
-    static VkShaderStageFlags getShaderStage(SpvExecutionModel executionModel) {
-        switch (executionModel) {
-            case SpvExecutionModelVertex: {
-                return VK_SHADER_STAGE_VERTEX_BIT;
-            }; 
-            case SpvExecutionModelFragment: {
-                return VK_SHADER_STAGE_FRAGMENT_BIT;
-            }; 
-            case SpvExecutionModelMeshNV: {
-                return VK_SHADER_STAGE_MESH_BIT_NV;
-            };
-            default: {
-                throw std::runtime_error("Cannot map the SPIR-V execution model bytecode to shader stage");
-            };
-        }
+    // this operator is used to push DescriptorResourceInfo into std::set
+    bool operator<(const DescriptorResourceInfo& other) const {
+        if (set != other.set) return set < other.set;
+        return binding < other.binding;
     }
 };
+struct Shader {
+    VkShaderModule module;
+    // a shader can only belong to one stage
+    VkShaderStageFlagBits stage;
+    std::vector<uint32_t> code; // vector of words (1 word = uint32_t = 4 bytes)
+    uint32_t codeSize; // size in bytes
+};
 
-// this struct is only used to provide data for descriptor update template
-struct DescriptorInfo {
+// this struct is only used to provide actual data for descriptor update template
+struct DescriptorData {
     union {
         VkDescriptorImageInfo imageInfo;
         VkDescriptorBufferInfo bufferInfo;
@@ -126,6 +127,8 @@ private:
     std::vector<VkImageView> swapchainImageViews;
     VkPipeline graphicsPipeline;
     VkPipeline meshGraphicsPipeline;
+    Shader shaders[3]; // collection of all shaders to be compiled
+    std::set<DescriptorResourceInfo> descriptorResourceInfos; // descriptor resources information extracted from SPIR-V
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorUpdateTemplate descriptorUpdateTemplate;
     VkDescriptorPool descriptorPool;
@@ -168,6 +171,7 @@ private:
     void createDevice();
     void createSwapchain();
     void createImageView(VkFormat format, VkImage& image, uint32_t mipLevels, VkImageAspectFlags aspectMask, VkImageView& imageView);
+    void createShaders();
     void createDescriptorSetLayout();
     void createDescriptorUpdateTemplate();
     void createDescriptorPool();
@@ -204,6 +208,9 @@ private:
     uint32_t currentFrame = 0;
     const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/kitten.obj";
     const std::string TEXTURE_PATH = std::string(PROJECT_ROOT) + "/textures/viking_room.png";
+    const std::string VERT_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv";
+    const std::string MESH_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv";
+    const std::string FRAG_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.frag.spv";
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
         "VK_KHR_xcb_surface"

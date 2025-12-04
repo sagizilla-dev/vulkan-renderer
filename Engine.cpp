@@ -31,6 +31,7 @@ Engine::Engine() {
     createVertexBuffer();
     createIndexBuffer();
     createMeshletBuffer();
+    createShaders();
     createDescriptorSetLayout();
     createDescriptorUpdateTemplate();
     createDescriptorPool();
@@ -440,28 +441,25 @@ void Engine::createImageView(VkFormat format, VkImage& image, uint32_t mipLevels
     imageViewInfo.subresourceRange.levelCount = mipLevels;
     VK_CHECK(vkCreateImageView(device, &imageViewInfo, nullptr, &imageView));
 }
+void Engine::createShaders() {
+    // mostly used to create shader modules and parse SPIR-V
+    createShader(shaders[0], VERT_SHADER_PATH);
+    createShader(shaders[1], FRAG_SHADER_PATH);
+    createShader(shaders[2], MESH_SHADER_PATH);
+}
 void Engine::createDescriptorSetLayout() {
     // this function creates descriptor set layout, which specifies what type of resources
     // are to be passed into the shaders, same way render pass defines what type of attachments to expect
     // descriptor sets define data itself, same way framebuffers define exact attachments
-    std::vector<VkDescriptorSetLayoutBinding> layoutBindings(4);
-    layoutBindings[0].binding = 0; // referenced in the shader as layout(binding = X)
-    layoutBindings[0].descriptorCount = 1; // descriptor can be an array
-    layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    layoutBindings[0].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV | VK_SHADER_STAGE_VERTEX_BIT;
-    layoutBindings[1].binding = 1;
-    layoutBindings[1].descriptorCount = 1;
-    layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    layoutBindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-    layoutBindings[2].binding = 2;
-    layoutBindings[2].descriptorCount = 1;
-    layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    layoutBindings[2].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV | VK_SHADER_STAGE_VERTEX_BIT;
-    layoutBindings[3].binding = 3;
-    layoutBindings[3].descriptorCount = 1;
-    layoutBindings[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    layoutBindings[3].stageFlags = VK_SHADER_STAGE_MESH_BIT_NV;
-
+    std::vector<VkDescriptorSetLayoutBinding> layoutBindings(descriptorResourceInfos.size());
+    int i = 0;
+    for (auto& descriptorResourceInfo: descriptorResourceInfos) {
+        layoutBindings[i].binding = descriptorResourceInfo.binding; // referenced in the shader as layout(binding = X)
+        layoutBindings[i].descriptorCount = 1; // descriptor can be an array
+        layoutBindings[i].descriptorType = descriptorResourceInfo.type;
+        layoutBindings[i].stageFlags = descriptorResourceInfo.stage;
+        i++;
+    }
     VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
     descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     descriptorSetLayoutInfo.bindingCount = layoutBindings.size();
@@ -475,37 +473,20 @@ void Engine::createDescriptorUpdateTemplate() {
     info.descriptorSetLayout = descriptorSetLayout;
     info.templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET;
     
-    std::vector<VkDescriptorUpdateTemplateEntry> entries(4);
-    entries[0].descriptorCount = 1; // in case the descriptor is an array
-    entries[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    entries[0].dstBinding = 0;
-    entries[0].dstArrayElement = 0;
-    // the next two fields specify how to map the data that is going to be updated
-    // since the function vkUpdateDescriptorSetWithTemplate() accepts void* data, we can specify our own
-    // data class to hold the data, so we need to provide details about it
-    entries[0].stride = sizeof(DescriptorInfo); // spacing between consecutive descriptors (same for all entries since array is tightly packed)
-    entries[0].offset = 0; // offset in the provided data array, used to find the correct descriptor data
-
-    entries[1].descriptorCount = 1;
-    entries[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    entries[1].dstBinding = 1;
-    entries[1].dstArrayElement = 0;
-    entries[1].stride = sizeof(DescriptorInfo);
-    entries[1].offset = sizeof(DescriptorInfo);
-
-    entries[2].descriptorCount = 1;
-    entries[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    entries[2].dstBinding = 2;
-    entries[2].dstArrayElement = 0;
-    entries[2].stride = sizeof(DescriptorInfo);
-    entries[2].offset = sizeof(DescriptorInfo)*2;
-
-    entries[3].descriptorCount = 1;
-    entries[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    entries[3].dstBinding = 3;
-    entries[3].dstArrayElement = 0;
-    entries[3].stride = sizeof(DescriptorInfo);
-    entries[3].offset = sizeof(DescriptorInfo)*3;
+    std::vector<VkDescriptorUpdateTemplateEntry> entries(descriptorResourceInfos.size());
+    int i = 0;
+    for (auto& descriptorResourceInfo: descriptorResourceInfos) {
+        entries[i].descriptorCount = 1; // in case the descriptor is an array
+        entries[i].descriptorType = descriptorResourceInfo.type;
+        entries[i].dstBinding = descriptorResourceInfo.binding;
+        entries[i].dstArrayElement = 0;
+        // the next two fields specify how to map the data that is going to be updated
+        // since the function vkUpdateDescriptorSetWithTemplate() accepts void* data, we can specify our own
+        // data class to hold the data, so we need to provide details about it
+        entries[i].stride = sizeof(DescriptorData); // spacing between consecutive descriptors (same for all entries since array is tightly packed)
+        entries[i].offset = sizeof(DescriptorData)*i; // offset in the provided data array, used to find the correct descriptor data
+        i++;
+    }
 
     info.descriptorUpdateEntryCount = entries.size();
     info.pDescriptorUpdateEntries = entries.data();
@@ -546,16 +527,20 @@ void Engine::createDescriptorSets() {
 
     // bind the actual data to descriptor sets
     for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
-        std::vector<DescriptorInfo> data(4);
+        std::vector<DescriptorData> data(4);
+        // uniform buffer
         data[0].bufferInfo.buffer = uniformBuffers[i];
         data[0].bufferInfo.offset = 0;
         data[0].bufferInfo.range = sizeof(MVP);
+        // image and sampler
         data[1].imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         data[1].imageInfo.imageView = textureImageView;
         data[1].imageInfo.sampler = textureSampler;
+        // vertex buffer
         data[2].bufferInfo.buffer = vertexBuffer;
         data[2].bufferInfo.offset = 0;
         data[2].bufferInfo.range = sizeof(vertices[0])*vertices.size();
+        // meshlet buffer
         data[3].bufferInfo.buffer = meshletBuffer;
         data[3].bufferInfo.offset = 0;
         data[3].bufferInfo.range = sizeof(meshlets[0])*meshlets.size();
@@ -564,26 +549,15 @@ void Engine::createDescriptorSets() {
         vkUpdateDescriptorSetWithTemplate(device, descriptorSets[i], descriptorUpdateTemplate, data.data());
     }
 }
-void Engine::createGraphicsPipeline() {
-    Shader vertShader{};
-    // this function creates shader module and parses SPIR-V to extract information like shader stage
-    createShader(vertShader, std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv");
-    Shader meshShader{};
-    createShader(meshShader, std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv");
-    Shader fragShader{};
-    createShader(fragShader, std::string(PROJECT_ROOT) + "/shaders/shader.frag.spv");
-    
+void Engine::createGraphicsPipeline() {    
     std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(2);
-    shaderStageInfos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStageInfos[0].module = vertShader.module;
-    shaderStageInfos[0].pName = "main";
-    shaderStageInfos[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    shaderStageInfos[0].pSpecializationInfo = VK_NULL_HANDLE; // allows us to specify values for shader constants
-    shaderStageInfos[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStageInfos[1].module = fragShader.module;
-    shaderStageInfos[1].pName = "main";
-    shaderStageInfos[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    shaderStageInfos[1].pSpecializationInfo = VK_NULL_HANDLE;
+    for (size_t i=0; i<shaderStageInfos.size(); i++) {
+        shaderStageInfos[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        shaderStageInfos[i].module = shaders[i].module;
+        shaderStageInfos[i].pName = "main";
+        shaderStageInfos[i].stage = shaders[i].stage;
+        shaderStageInfos[i].pSpecializationInfo = VK_NULL_HANDLE; // allows us to specify values for shader constants
+    }
 
     std::vector<VkDynamicState> dynamicStates = {
         VK_DYNAMIC_STATE_VIEWPORT,
@@ -683,26 +657,27 @@ void Engine::createGraphicsPipeline() {
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // in case we want to derive a pipeline from another one
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline));
-    shaderStageInfos[0].stage = VK_SHADER_STAGE_MESH_BIT_NV;
-    shaderStageInfos[0].module = meshShader.module;
+    shaderStageInfos[0].stage = shaders[2].stage;
+    shaderStageInfos[0].module = shaders[2].module;
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &meshGraphicsPipeline));
 
     // we can delete shader module right away since compilation and
     // linking of shaders are done when pipeline is created
-    vkDestroyShaderModule(device, vertShader.module, nullptr);
-    vkDestroyShaderModule(device, fragShader.module, nullptr);
-    vkDestroyShaderModule(device, meshShader.module, nullptr);
+    for (auto& shader: shaders) {
+        vkDestroyShaderModule(device, shader.module, nullptr);
+    }
 }
 void Engine::createShader(Shader& shader, std::string path) {
-    auto bytes = readFile(path);
-    // spirv is read as a vector of bytes (char), so we need to convert it
+    // SPIR-V is read as a vector of bytes (char), so we need to convert it
     // to a vector of words (std::vector<uint32_t>, so 4 bytes per word)
+    auto bytes = readFile(path);
     uint32_t wordCount = bytes.size()/4;
     std::vector<uint32_t> byteCode(wordCount);
     memcpy(byteCode.data(), bytes.data(), bytes.size());
     shader.code = byteCode;
     shader.codeSize = bytes.size();
 
+    // parse SPIR-V to extract information about descriptor sets and what stage the shader belongs to
     parseSPIRV(shader);
 
     createShaderModule(shader);
@@ -1419,21 +1394,151 @@ void Engine::parseSPIRV(Shader& shader) {
     uint32_t* spirv = shader.code.data();
     uint32_t codeSize = shader.codeSize/4; // code size in words
     
-    assert(spirv[0]==SpvMagicNumber);
-
-    // uint32_t idBound = spirv[3];
-    // actual instructions start at word 6
+    assert(spirv[0] == SpvMagicNumber); // verify the file is SPIR-V
+    
+    std::unordered_map<uint32_t, std::string> names; // map ID to names
+    std::unordered_map<uint32_t, uint32_t> descriptorSetDecorations; // map Variable ID to set numbers
+    std::unordered_map<uint32_t, uint32_t> descriptorBindingDecorations; // map Variable ID to descriptor binding numbers
+    std::unordered_map<uint32_t, uint32_t> typeInfo; // map Variable ID to Type ID
+    std::unordered_map<uint32_t, VkDescriptorType> descriptorTypes;  // map Type ID to descriptor types
+    
+    // actual instructions start at word 5
     const uint32_t* instr = spirv+5;
     while (instr < spirv + codeSize) {
         uint16_t opCode = uint16_t(*instr & 0xffff);
         uint16_t wordCount = uint16_t(*instr >> 16); // number of words in the instruction
         switch (opCode) {
             case SpvOpEntryPoint: {
-                shader.stage = Shader::getShaderStage(SpvExecutionModel(instr[1]));
+                // OpEntryPoint: specifies the shader type
+                // word 0: instruction
+                // word 1: execution model
+                // word 2: entry point ID (result ID of an OpFunction instruction)
+                // word 3: name
+                // word 4+: inputs and outputs
+                switch (instr[1]) {
+                    case SpvExecutionModelVertex: {
+                        shader.stage = VK_SHADER_STAGE_VERTEX_BIT;
+                        break;
+                    }; 
+                    case SpvExecutionModelFragment: {
+                        shader.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+                        break;
+                    }; 
+                    case SpvExecutionModelMeshNV: {
+                        shader.stage = VK_SHADER_STAGE_MESH_BIT_NV;
+                        break;
+                    };
+                    default: {
+                        throw std::runtime_error("Cannot map the SPIR-V execution model bytecode to shader stage");
+                    };
+                }
                 break;
-            };
+            }
+            
+            case SpvOpName: {
+                // OpName: assigns a name string to another instruction's result ID
+                // word 0: instruction
+                // word 1: target ID
+                // word 2: name
+                uint32_t targetId = instr[1];
+                names[targetId] = std::to_string(instr[2]);
+                break;
+            }
+            
+            case SpvOpDecorate: {
+                // OpDecorate: adds a decoration (additional information) to target ID
+                // word 0: instruction
+                // word 1: target ID
+                // word 2: decoration
+                // word 3: extra information
+                if (wordCount >= 4) { // if decoration is a descriptor, we need at least 4 words to specify set or binding
+                    uint32_t targetId = instr[1];
+                    uint32_t decoration = instr[2];
+                    
+                    if (decoration == SpvDecorationDescriptorSet) {
+                        // we are decorating it with a descriptor set, i.e
+                        // put this descriptor into set X
+                        descriptorSetDecorations[targetId] = instr[3];
+                    } else if (decoration == SpvDecorationBinding) {
+                        // we are decorating it with a descriptor binding number, i.e
+                        // put this descriptor at binding X 
+                        descriptorBindingDecorations[targetId] = instr[3];
+                    }
+                }
+                break;
+            }
+            
+            case SpvOpTypePointer: {
+                // OpTypePointer: declares a new pointer type
+                // word 0: instruction
+                // word 1: result ID
+                // word 2: storage class
+                // word 3: target ID of the data struct
+                // i.e declare a new pointer located in X storage class pointing to Y data struct
+                if (wordCount >= 4) {
+                    uint32_t resultId = instr[1];
+                    uint32_t storageClass = instr[2];
+                    
+                    if (storageClass == SpvStorageClassUniform) {
+                        descriptorTypes[resultId] = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                    } else if (storageClass == SpvStorageClassStorageBuffer) {
+                        descriptorTypes[resultId] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                    } else if (storageClass == SpvStorageClassUniformConstant) {
+                        descriptorTypes[resultId] = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    }
+                }
+                break;
+            }
+            
+            case SpvOpVariable: {
+                // OpVariable: allocates an object in memory resulting in a pointer to it
+                // word 0: instruction
+                // word 1: result type ID (type of this variable), which must be OpTypePointer
+                // word 2: result ID, which might have already been decorated
+                // word 3: storage class, i.e where memory lives (must be the same as storage class operand of the result type id)
+                // word 4: optional, specifies the initial value of the variable's memory content
+                if (wordCount >= 4) {
+                    uint32_t typeId = instr[1];
+                    uint32_t resultId = instr[2];
+                    uint32_t storageClass = instr[3];
+                    
+                    if (storageClass == SpvStorageClassUniform || 
+                        storageClass == SpvStorageClassStorageBuffer ||
+                        storageClass == SpvStorageClassUniformConstant) {
+                        
+                        typeInfo[resultId] = typeId;
+                        
+                        // check if we have already decorated this variable
+                        if (descriptorSetDecorations.count(resultId) && descriptorBindingDecorations.count(resultId)) {
+                            DescriptorResourceInfo desc{};
+                            desc.set = descriptorSetDecorations[resultId];
+                            desc.binding = descriptorBindingDecorations[resultId];
+                            desc.type = descriptorTypes.count(typeId) ? 
+                                        descriptorTypes[typeId] : 
+                                        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                            desc.descriptorCount = 1;
+                            desc.name = names.count(resultId) ? names[resultId] : "";
+                            
+                            // it is assumed OpEntryPoint instruction has been reached before OpVariable as per SPIR-V specs
+                            desc.stage = shader.stage;
+
+                            // in case there is another shader that has already defined a descriptor of the same binding 
+                            // in the same set, just add additional shader stage to the one already stored
+                            auto res = descriptorResourceInfos.insert(desc);
+                            if (!res.second) {
+                                DescriptorResourceInfo existingResource = *res.first;
+                                desc.stage |= existingResource.stage;
+                                descriptorResourceInfos.erase(res.first);
+                                descriptorResourceInfos.insert(desc);
+                            }
+                        }
+                    }
+                }
+                break;
+            }
         }
-        instr+=wordCount;
+        
+        instr += wordCount;
     }
 }
 void Engine::updateMVP() {
@@ -1485,12 +1590,9 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             else
                 vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
-            // firstSet refers to the descriptor set layout, i.e. layout(set = X, binding = Y)
+            // first set is the set number of the first descriptor set to be bound from the provided descriptorSets array
             vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
-            // VkDeviceSize offset = {0};
-            // this function is used to bind vertex buffer to bindings defined in graphics pipeline creation
-            // vkCmdBindVertexBuffers(cmdBuffer, 0, 1, &vertexBuffer, &offset);
             vkCmdBindIndexBuffer(cmdBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 
             VkViewport viewport{};
