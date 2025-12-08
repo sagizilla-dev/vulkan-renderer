@@ -165,6 +165,8 @@ private:
 
     void createWindow();
     void loadModel();
+    float computeVertexScore(int cachePosition, int valence);
+    void optimizeGeometry();
     void createMeshlets();
     void createInstance();
     void createSurface();
@@ -206,6 +208,7 @@ private:
 
     const int MAX_FRAMES_IN_FLIGHT = 4;
     uint32_t currentFrame = 0;
+    std::vector<float> gpuTimes;
     const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/kitten.obj";
     const std::string TEXTURE_PATH = std::string(PROJECT_ROOT) + "/textures/viking_room.png";
     const std::string VERT_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv";

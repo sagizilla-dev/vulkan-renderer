@@ -111,12 +111,18 @@ void Engine::run() {
             if (result == VK_SUCCESS) {
                 uint64_t delta = timestamps[1] - timestamps[0];
                 float gpuTimeMs = (delta * timestampPeriod) / 1000000.0f;
-                // output stats every 30 frames
-                if (frameCounter % 30 == 0) {
+                gpuTimes.push_back(gpuTimeMs);
+                // output stats every 200 frames
+                if (gpuTimes.size()==200) {
                     char title[256];
+                    float avgGpuTime = 0.0f;
+                    for (int i=0; i<200; i++) {
+                        avgGpuTime+=gpuTimes[i]/200;
+                    }
                     snprintf(title, sizeof(title), "GPU Time: %.3f ms (%.1f FPS), %i meshlets, %i vertices", 
-                             gpuTimeMs, 1000.0f / gpuTimeMs, int(meshlets.size()), int(vertices.size()));
+                            avgGpuTime, 1000.0f / avgGpuTime, int(meshlets.size()), int(vertices.size()));
                     glfwSetWindowTitle(window, title);
+                    gpuTimes.clear();
                 }
             }
         }
@@ -243,6 +249,164 @@ void Engine::loadModel() {
     // it is important to build meshlets in a way that maximize the number of triangles per meshlets,
     // not vertices per meshlets
     // otherwise we end up with scatterred triangles belonging to the same meshlet
+    optimizeGeometry();
+}
+// calculate vertex score based off its cache position (higher for vertices recently used)
+// and valence (prefer vertices shared by fewer remaining triangles so that the vertex can be evicted
+// from cache sooner)
+float Engine::computeVertexScore(int cachePosition, int valence) {
+    // cache is LRU, index 31 is the oldest, 0 is the newest
+    
+    if (valence == 0) {
+        return -1.0f; // dead vertex, no triangles left
+    }
+    
+    // calcualte score based off its cache position
+    float cacheScore = 0.0f;
+    if (cachePosition < 0) {
+        cacheScore = 0.0f; // not in cache
+    } else if (cachePosition < 3) {
+        cacheScore = 0.75f; // this vertex is hot, it's been used recently
+    } else { // in cache but old
+        const int CACHE_SIZE = 32;
+        float normalizedPosition = (cachePosition - 3)*(1.0f / (CACHE_SIZE - 3)); // map [3, 31] to [0, 1]
+        cacheScore = std::pow(1.0f - normalizedPosition, 1.5f); // exponential decay, i.e the older vertex, the lower the score 
+    }
+
+    // calculate score based off valence (fewer unprocessed triangles means higher the score)
+    float valenceScore = 2.0f * std::pow(float(valence), -0.5f);
+    return cacheScore+valenceScore;
+}
+
+// Forsyth's algorithm
+void Engine::optimizeGeometry() {
+    const uint32_t triangleCount = indices.size()/3;
+    const uint32_t vertexCount = vertices.size();
+    // connectivity graph
+    // maps a vertex index (value in the index buffer) to a list of triangle indices that use it
+    std::vector<std::vector<uint32_t>> vertexToTriangles(vertices.size());
+
+    for (size_t i=0; i<triangleCount; i++) {
+        // get vertex indices
+        uint32_t v0 = indices[i*3+0];
+        uint32_t v1 = indices[i*3+1];
+        uint32_t v2 = indices[i*3+2];
+        
+        // for each vertex push the triangle index
+        vertexToTriangles[v0].push_back(i);
+        vertexToTriangles[v1].push_back(i);
+        vertexToTriangles[v2].push_back(i);
+    }
+
+    // maps a vertex index to how many unprocessed triangles still need that vertex
+    // basically maps vertex index to its valence score (how many unprocessed triangles use this vertex)
+    std::vector<int> unprocessedTriangles(vertexCount);
+    // maps a vertex index to its position inside the cache
+    std::vector<int> vertexCachePosition(vertexCount, -1);
+    // maps a vertex index to its score
+    std::vector<float> vertexScore(vertexCount);
+
+    // maps a triangle index to its score (sum of scores of all its vertices)
+    std::vector<float> triangleScore(triangleCount);
+    // whether a triangle has been processed
+    std::vector<bool> isTriangleFinished(triangleCount, false);
+
+    // initialize valence: how many unprocessed (at this stage all of them) triangles require this vertex
+    for (uint32_t i=0; i<vertexCount; i++) {
+        unprocessedTriangles[i] = vertexToTriangles[i].size();
+    }
+    // calculate initial scores
+    for (uint32_t i=0; i<vertexCount; i++) {
+        vertexScore[i] = computeVertexScore(vertexCachePosition[i], unprocessedTriangles[i]);
+    }
+    for (uint32_t i=0; i<triangleCount; i++) {
+        triangleScore[i] = vertexScore[indices[i*3+0]] + vertexScore[indices[i*3+1]] + vertexScore[indices[i*3+2]]; 
+    }
+
+    // simulate LRU cache that stores vertex indices
+    std::vector<int> cache;
+    cache.reserve(32);
+
+    std::vector<uint32_t> reorderedIndexBuffer;
+    reorderedIndexBuffer.reserve(indices.size());
+
+    int nextBestTriangle = -1;
+
+    for (uint32_t i=0; i<triangleCount; i++) {
+        // find the best triangle
+        int bestTriangle = nextBestTriangle;
+        float bestScore = bestTriangle >= 0 ? triangleScore[bestTriangle] : std::numeric_limits<float>::min();
+        if (bestTriangle < 0 || isTriangleFinished[bestTriangle]) { // no candidate or the triangle has been processed
+            bestTriangle = -1;
+            bestScore = std::numeric_limits<float>::min();
+            for (uint32_t j=0; j<triangleCount; j++) {
+                if (triangleScore[j] > bestScore && !isTriangleFinished[j]) {
+                    bestScore = triangleScore[j];
+                    bestTriangle = j;
+                }
+            }
+        }
+
+        uint32_t v0 = indices[bestTriangle*3+0];
+        uint32_t v1 = indices[bestTriangle*3+1];
+        uint32_t v2 = indices[bestTriangle*3+2];
+        reorderedIndexBuffer.push_back(v0);
+        reorderedIndexBuffer.push_back(v1);
+        reorderedIndexBuffer.push_back(v2);
+        isTriangleFinished[bestTriangle] = true;
+
+        // update vertex scores and cache
+        std::vector<uint32_t> affectedVertices;
+        for (uint32_t v: {v0, v1, v2}) {
+            // update cache
+            auto it = std::find(cache.begin(), cache.end(), v);
+            if (it != cache.end()) {
+                cache.erase(it);
+            }
+            cache.insert(cache.begin(), v);
+
+            if (cache.size() > 32) {
+                int evictedVertex = cache.back();
+                cache.pop_back();
+                vertexCachePosition[evictedVertex] = -1;
+                affectedVertices.push_back(evictedVertex);
+            }
+
+            // this vertex now has fewer unprocessed triangles that use it 
+            affectedVertices.push_back(v);
+            unprocessedTriangles[v]--;
+        }
+
+        // update cache positions
+        for (size_t i=0; i<cache.size(); i++) {
+            vertexCachePosition[cache[i]] = i;
+        }
+
+        // recalculate scores of affected triangles
+        for (uint32_t v: affectedVertices) {
+            vertexScore[v] = computeVertexScore(vertexCachePosition[v], unprocessedTriangles[v]);
+            for (uint32_t triangle: vertexToTriangles[v]) {
+                if (!isTriangleFinished[triangle]) {
+                    triangleScore[triangle] = vertexScore[indices[triangle*3+0]] +
+                                            vertexScore[indices[triangle*3+1]] + 
+                                            vertexScore[indices[triangle*3+2]]; 
+                }
+            }
+        }
+
+        nextBestTriangle = -1;
+        bestScore = std::numeric_limits<float>::min();
+        // search only cache-adjacent triangles
+        for (int v: cache) {
+            for (uint32_t triangle: vertexToTriangles[v]) {
+                if (!isTriangleFinished[triangle] && triangleScore[triangle] > bestScore) {
+                    bestScore = triangleScore[triangle];
+                    nextBestTriangle = triangle;
+                }
+            }
+        }
+    }
+    indices = reorderedIndexBuffer;
 }
 void Engine::createMeshlets() {
     Meshlet meshlet = {};
