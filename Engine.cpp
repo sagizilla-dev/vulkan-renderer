@@ -270,10 +270,15 @@ float Engine::computeVertexScore(int cachePosition, int valence) {
     } else { // in cache but old
         const int CACHE_SIZE = 32;
         float normalizedPosition = (cachePosition - 3)*(1.0f / (CACHE_SIZE - 3)); // map [3, 31] to [0, 1]
-        cacheScore = std::pow(1.0f - normalizedPosition, 1.5f); // exponential decay, i.e the older vertex, the lower the score 
+        // exponential decay, i.e the older vertex, the lower the score
+        // 1.5 is the decay power, meaning the decay is not linear
+        cacheScore = std::pow(1.0f - normalizedPosition, 1.5f); 
     }
 
     // calculate score based off valence (fewer unprocessed triangles means higher the score)
+    // valence boost scale is 2.0f, which defines the strength of the heuristic
+    // valence boost power is 0.5f, which produces diminishing returns for vertices that appear in
+    // many triangles
     float valenceScore = 2.0f * std::pow(float(valence), -0.5f);
     return cacheScore+valenceScore;
 }
