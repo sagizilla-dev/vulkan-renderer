@@ -97,3 +97,15 @@ inline uint16_t floatToHalf(float f) {
     memcpy(&res, &h, sizeof(uint16_t));
     return res;
 }
+
+inline float halfToFloat(uint16_t f) {
+    uint16_t sign = f >> 15;
+    uint16_t exp = (f >> 10) & 31;
+    uint16_t mantissa = f & 1023;
+    if (exp==0) {
+        // mantissa must be 0 here
+        return 0.0f;
+    }
+    // mantissa must be extended with a leading 1, so add 1024 and divide by it
+    return (sign ? -1.0f : 1.0f) * ldexpf(float(mantissa+1024)/1024.f, exp-15);
+}

@@ -15,6 +15,7 @@ Engine::Engine() {
     createWindow();
     loadModel();
     createMeshlets();
+    buildMeshletCons();
     createInstance();
     createSurface();
     createDevice();
@@ -413,8 +414,78 @@ void Engine::optimizeGeometry() {
     }
     indices = reorderedIndexBuffer;
 }
+void Engine::buildMeshletCons() {
+    for (Meshlet& meshlet: meshlets) {
+        // first we need to calculate triangle normals
+        float normals[126][3];
+        for (uint8_t i=0; i<meshlet.triangleCount; i++) {
+            uint8_t i0 = meshlet.indices[i*3+0];
+            uint8_t i1 = meshlet.indices[i*3+1];
+            uint8_t i2 = meshlet.indices[i*3+2];
+
+            const Vertex& v0 = vertices[meshlet.vertices[i0]];
+            const Vertex& v1 = vertices[meshlet.vertices[i1]];
+            const Vertex& v2 = vertices[meshlet.vertices[i2]];
+
+            // we return to full precision as half precision messes up the cull test
+            glm::vec3 p0 = glm::vec3(halfToFloat(v0.vx), halfToFloat(v0.vy), halfToFloat(v0.vz));
+            glm::vec3 p1 = glm::vec3(halfToFloat(v1.vx), halfToFloat(v1.vy), halfToFloat(v1.vz));
+            glm::vec3 p2 = glm::vec3(halfToFloat(v2.vx), halfToFloat(v2.vy), halfToFloat(v2.vz));
+
+            glm::vec3 p10 = p1-p0;
+            glm::vec3 p20 = p2-p0;
+
+            // direction of normal is defined by the winding order
+            glm::vec3 normal = glm::normalize(glm::cross(p10, p20));
+            normals[i][0] = normal.x;
+            normals[i][1] = normal.y;
+            normals[i][2] = normal.z;
+        }
+
+        // average normal (cone's axis) for the entire meshlet
+        glm::vec3 avgNormal = glm::vec3(0.0f);
+        for (uint8_t i=0; i<meshlet.triangleCount; i++) {
+            avgNormal+=glm::vec3(normals[i][0], normals[i][1], normals[i][2]);
+        }
+        avgNormal = glm::normalize(avgNormal);
+
+        // the cosine of the angle between average normal and furthest triangle normal
+        // if this value is 0, some normals are orthogonal to other normals
+        // the bigger this value, the smaller the spread of the cone is, which is good for culling!
+        float halfAngle = 1.0f;
+        for (uint8_t i=0; i<meshlet.triangleCount; i++) {
+            float dp = normals[i][0]*avgNormal.x + normals[i][1]*avgNormal.y + normals[i][2]*avgNormal.z;
+            halfAngle = std::min(halfAngle, dp);
+        }
+
+        // to prove the meshlet is not visible, we need to check whether all normals within the cone
+        // point away from the camera, i.e dot product between view vector and any normal is negative as the angle
+        // is more than 90 degrees
+        // since the angle between average normal and furthest normal is A, we can
+        // write the inequality as angle(View, AvgNormal) > 90 deg + A.
+        // if it is true, we can cull the entire meshlet
+        // in other words, the cone test is: dot(View, AvgNormal) < cos(90+A), or 
+        // dot(View, AvgNormal) < -sin(A)
+        // note that if the cone's half angle is more than 90 degrees, we cannot
+        // cull this meshlet, which is a usual case for high poly meshes
+        // if that's the case, clip the angle to 90 degrees
+        float coneW = halfAngle < 0.0f ? 1.0f : sqrtf(1-halfAngle*halfAngle);
+        meshlet.cone[0] = avgNormal.x;
+        meshlet.cone[1] = avgNormal.y;
+        meshlet.cone[2] = avgNormal.z;
+        meshlet.cone[3] = coneW;
+
+        for (uint8_t i=0; i<meshlet.vertexCount; i++) {
+            meshlet.coneApex[0]+=(halfToFloat(vertices[meshlet.vertices[i]].vx))/float(meshlet.vertexCount);
+            meshlet.coneApex[1]+=(halfToFloat(vertices[meshlet.vertices[i]].vy))/float(meshlet.vertexCount);
+            meshlet.coneApex[2]+=(halfToFloat(vertices[meshlet.vertices[i]].vz))/float(meshlet.vertexCount);
+        }
+    }
+}
 void Engine::createMeshlets() {
     Meshlet meshlet = {};
+    // this maps vertex to its status inside the meshlet, i.e whether it's already been added or not
+    // if it has been added, it contains the local vertex index
 	std::vector<uint8_t> meshletVertices(vertices.size(), 0xff);
 	for (size_t i = 0; i < indices.size(); i += 3) {
 		unsigned int a = indices[i + 0];

@@ -59,10 +59,17 @@ namespace std {
     };
 }
 struct Meshlet {
+    // cone[0:3] describes the cone axis as an average of all normals within the meshlet
+    // cone[3] describes the sin(A), where A is the half angle of the cone (angle between the furthest normal and cone axis)
+    float cone[4];
+    // cone apex is the average of all vertices within the meshlet, it is needed to
+    // calculate the view vector
+    float coneApex[4]; // vec3 is padded to vec4 anyways
     uint32_t vertices[64];
     uint8_t indices[126*3];
     uint8_t triangleCount;
     uint8_t vertexCount;
+    float padding; // for alignment
 };
 
 struct MVP {
@@ -167,6 +174,7 @@ private:
     void loadModel();
     float computeVertexScore(int cachePosition, int valence);
     void optimizeGeometry();
+    void buildMeshletCons();
     void createMeshlets();
     void createInstance();
     void createSurface();

@@ -42,10 +42,35 @@ vec3 meshletColor(uint meshletIndex) {
     return rgb;
 }
 
+bool coneCull(vec3 coneAxis, float coneW, vec3 cameraPos, vec3 coneApex) {
+    // view direction comes from cone apex to camera
+    vec3 viewDirection = normalize(cameraPos - coneApex);
+    return dot(coneAxis, viewDirection) < -coneW;
+}
+
 void main() {
     uint meshletID = gl_WorkGroupID.x;
     uint tid = gl_LocalInvocationID.x;
 
+    // if we inverse the view matrix, we can get the camera position in the world space
+    // by accessing the last row
+    mat4 invView = inverse(mvp.view);
+    vec3 cameraPos = vec3(invView[3][0], invView[3][1], invView[3][2]);
+    // cone apex must be translated into world coordinates
+    vec3 coneApex = vec3(mvp.model * vec4(meshlets[meshletID].coneApex.xyz, 1.0));
+    // cone axis must be translated into world coordinates as well
+    // although we need to ignore translation this time since axis is a vector
+    // which has no position
+    vec3 coneAxis = normalize(mat3(mvp.model) * meshlets[meshletID].cone.xyz);
+    // get the cone spread as -sin(A)
+    float coneW = meshlets[meshletID].cone.w;
+    if (coneCull(coneAxis, coneW, cameraPos, coneApex)) {
+        if (tid == 0) {
+            gl_PrimitiveCountNV = 0;
+        }
+        return;
+    }
+    
     // each thread must process a vertex
     for (uint i = tid; i < meshlets[meshletID].vertexCount; i+=32) {
         uint32_t globalVertexID = meshlets[meshletID].vertices[i]; 
