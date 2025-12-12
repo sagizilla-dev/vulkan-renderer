@@ -686,6 +686,7 @@ void Engine::createShaders() {
     createShader(shaders[0], VERT_SHADER_PATH);
     createShader(shaders[1], FRAG_SHADER_PATH);
     createShader(shaders[2], MESH_SHADER_PATH);
+    createShader(shaders[3], FRAG_SHADER_PATH);
 }
 void Engine::createDescriptorSetLayout() {
     // this function creates descriptor set layout, which specifies what type of resources
@@ -788,7 +789,7 @@ void Engine::createDescriptorSets() {
     }
 }
 void Engine::createGraphicsPipeline() {    
-    std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(2);
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(4);
     for (size_t i=0; i<shaderStageInfos.size(); i++) {
         shaderStageInfos[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         shaderStageInfos[i].module = shaders[i].module;
@@ -895,8 +896,7 @@ void Engine::createGraphicsPipeline() {
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // in case we want to derive a pipeline from another one
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline));
-    shaderStageInfos[0].stage = shaders[2].stage;
-    shaderStageInfos[0].module = shaders[2].module;
+    pipelineInfo.pStages = shaderStageInfos.data()+2;
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &meshGraphicsPipeline));
 
     // we can delete shader module right away since compilation and

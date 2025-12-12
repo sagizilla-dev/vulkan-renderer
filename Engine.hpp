@@ -134,7 +134,7 @@ private:
     std::vector<VkImageView> swapchainImageViews;
     VkPipeline graphicsPipeline;
     VkPipeline meshGraphicsPipeline;
-    Shader shaders[3]; // collection of all shaders to be compiled
+    Shader shaders[4]; // collection of all shaders to be compiled
     std::set<DescriptorResourceInfo> descriptorResourceInfos; // descriptor resources information extracted from SPIR-V
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorUpdateTemplate descriptorUpdateTemplate;
