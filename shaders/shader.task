@@ -1,0 +1,69 @@
+#version 460
+
+#extension GL_NV_mesh_shader : require
+#extension GL_EXT_shader_8bit_storage: require
+#extension GL_EXT_shader_explicit_arithmetic_types: require
+// subgroup is essentially a warp
+#extension GL_KHR_shader_subgroup_ballot: require
+
+#include "common.h"
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform MVP {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+} mvp;
+
+layout(set = 0, binding = 3) readonly buffer Meshlets {
+    Meshlet meshlets[];
+};
+
+out taskNV block {
+    uint meshletIndices[32]; // those are indices of meshlets that are not culled
+    // note that this array must be filled with values in a contiguous order, i.e there must be
+    // no gaps of garbage data
+};
+
+bool coneCull(vec3 coneAxis, float coneW, vec3 cameraPos, vec3 coneApex) {
+    // view direction comes from cone apex to camera
+    vec3 viewDirection = normalize(cameraPos - coneApex);
+    return dot(coneAxis, viewDirection) < -coneW;
+}
+
+void main() {
+    uint localMeshletID = gl_WorkGroupID.x; // meshlets batch index
+    uint tid = gl_LocalInvocationID.x; // meshlet index within the batch
+    uint meshletID = localMeshletID*32 + tid; // global meshlet ID
+
+    // if we inverse the view matrix, we can get the camera position in the world space
+    // by accessing the last row
+    mat4 invView = inverse(mvp.view);
+    vec3 cameraPos = vec3(invView[3][0], invView[3][1], invView[3][2]);
+    // cone apex must be translated into world coordinates
+    vec3 coneApex = vec3(mvp.model * vec4(meshlets[meshletID].coneApex.xyz, 1.0));
+    // cone axis must be translated into world coordinates as well
+    // although we need to ignore translation this time since axis is a vector
+    // which has no position
+    vec3 coneAxis = normalize(mat3(mvp.model) * meshlets[meshletID].cone.xyz);
+    // get the cone spread as -sin(A)
+    float coneW = meshlets[meshletID].cone.w;
+
+    bool accept = !coneCull(coneAxis, coneW, cameraPos, coneApex);
+    // ballot is a bitmask where each bit represents one thread's boolean value
+    // this function creates the bitmask based on the variable provided
+	uvec4 ballot = subgroupBallot(accept);
+    // this function counts how many 1 bits are before the current thread's position
+    uint index = subgroupBallotExclusiveBitCount(ballot);
+    // so if this thread didn't cull its meshlet, we store this meshlet's global ID at the appropriate
+    // position, which is defined by how many threads are supposed to write at the positions before
+    if (accept) {
+        meshletIndices[index] = meshletID;
+    }
+    // now we just count the total number of 1 bits in the ballot
+    uint count = subgroupBallotBitCount(ballot);
+    if (tid==0) {
+        gl_TaskCountNV = count; // this defines how many mesh shaders/workgroups to dispatch from this task shader
+    }
+}

@@ -134,7 +134,7 @@ private:
     std::vector<VkImageView> swapchainImageViews;
     VkPipeline graphicsPipeline;
     VkPipeline meshGraphicsPipeline;
-    Shader shaders[4]; // collection of all shaders to be compiled
+    Shader shaders[5]; // collection of all shaders to be compiled
     std::set<DescriptorResourceInfo> descriptorResourceInfos; // descriptor resources information extracted from SPIR-V
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorUpdateTemplate descriptorUpdateTemplate;
@@ -222,6 +222,7 @@ private:
     const std::string VERT_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv";
     const std::string MESH_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv";
     const std::string FRAG_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.frag.spv";
+    const std::string TASK_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.task.spv";
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
         "VK_KHR_xcb_surface"

@@ -578,6 +578,7 @@ void Engine::createDevice() {
     VkPhysicalDeviceMeshShaderFeaturesNV meshFeatures{};
     meshFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_NV;
     meshFeatures.meshShader = VK_TRUE;
+    meshFeatures.taskShader = VK_TRUE;
     // this feature allows us to use LocalSizeId to specify the local workgroup size
     VkPhysicalDeviceMaintenance4Features maintenanceFeatures{};
     maintenanceFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES;
@@ -685,8 +686,9 @@ void Engine::createShaders() {
     // mostly used to create shader modules and parse SPIR-V
     createShader(shaders[0], VERT_SHADER_PATH);
     createShader(shaders[1], FRAG_SHADER_PATH);
-    createShader(shaders[2], MESH_SHADER_PATH);
-    createShader(shaders[3], FRAG_SHADER_PATH);
+    createShader(shaders[2], TASK_SHADER_PATH);
+    createShader(shaders[3], MESH_SHADER_PATH);
+    createShader(shaders[4], FRAG_SHADER_PATH);
 }
 void Engine::createDescriptorSetLayout() {
     // this function creates descriptor set layout, which specifies what type of resources
@@ -789,7 +791,7 @@ void Engine::createDescriptorSets() {
     }
 }
 void Engine::createGraphicsPipeline() {    
-    std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(4);
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(5);
     for (size_t i=0; i<shaderStageInfos.size(); i++) {
         shaderStageInfos[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         shaderStageInfos[i].module = shaders[i].module;
@@ -896,6 +898,7 @@ void Engine::createGraphicsPipeline() {
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // in case we want to derive a pipeline from another one
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline));
+    pipelineInfo.stageCount = 3;
     pipelineInfo.pStages = shaderStageInfos.data()+2;
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &meshGraphicsPipeline));
 
@@ -1666,6 +1669,10 @@ void Engine::parseSPIRV(Shader& shader) {
                         shader.stage = VK_SHADER_STAGE_MESH_BIT_NV;
                         break;
                     };
+                    case SpvExecutionModelTaskNV: {
+                        shader.stage = VK_SHADER_STAGE_TASK_BIT_NV;
+                        break;
+                    };
                     default: {
                         throw std::runtime_error("Cannot map the SPIR-V execution model bytecode to shader stage");
                     };
@@ -1848,10 +1855,18 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
 
             PFN_vkCmdDrawMeshTasksNV vkCmdDrawMeshTasksNV = (PFN_vkCmdDrawMeshTasksNV)vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksNV");
-            if (meshShadersEnabled)
-                vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);
-            else
+            // task workgroup consists of 32 threads
+            // each thread must work on its own meshlet, and each workgroup's main thread dispatches
+            // mesh shaders (the number of dispatches depends on how many meshlets were culled)
+            // if the number of meshlets was 31, we'd still need to launch 1 task shader
+            // if the number of meshlets was 33, we'd need to launch 2 task shaders
+            uint32_t taskWorkgroups = (meshlets.size() + 31) / 32;
+            if (meshShadersEnabled) {
+                vkCmdDrawMeshTasksNV(cmdBuffer, taskWorkgroups, 0);
+                // vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);
+            } else {
                 vkCmdDrawIndexed(cmdBuffer, indices.size(), 1, 0, 0, 0);
+            }
         }
         vkCmdEndRenderPass(cmdBuffer);
         vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPools[currentFrame], 1);

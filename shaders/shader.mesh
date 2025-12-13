@@ -30,6 +30,14 @@ layout(set = 0, binding = 3) readonly buffer Meshlets {
     Meshlet meshlets[];
 };
 
+// this block is passed from the task shader and is shared between 31 other mesh workgroups
+// each mesh workgroup picks its meshlet index based on its workgroup ID
+// this meshlet index leads to a global buffer of meshlets, so the range of values here
+// is [0, meshletCount)
+in taskNV block {
+    uint meshletIndices[32];
+};
+
 layout(location = 0) out vec3 Normal[];
 layout(location = 1) out vec2 TexCoords[];
 
@@ -42,34 +50,12 @@ vec3 meshletColor(uint meshletIndex) {
     return rgb;
 }
 
-bool coneCull(vec3 coneAxis, float coneW, vec3 cameraPos, vec3 coneApex) {
-    // view direction comes from cone apex to camera
-    vec3 viewDirection = normalize(cameraPos - coneApex);
-    return dot(coneAxis, viewDirection) < -coneW;
-}
-
 void main() {
-    uint meshletID = gl_WorkGroupID.x;
+    // important note here is that task shaders dispatch mesh shaders independently
+    // i.e if one task shader dispatches 32 mesh workgroups, then the range of gl_WorkGroupID.x is [0, 31]
+    // meanwhile when the second task shader dispatches another 32 mesh workgroups, the range is also [0, 31]
+    uint meshletID = meshletIndices[gl_WorkGroupID.x];
     uint tid = gl_LocalInvocationID.x;
-
-    // if we inverse the view matrix, we can get the camera position in the world space
-    // by accessing the last row
-    mat4 invView = inverse(mvp.view);
-    vec3 cameraPos = vec3(invView[3][0], invView[3][1], invView[3][2]);
-    // cone apex must be translated into world coordinates
-    vec3 coneApex = vec3(mvp.model * vec4(meshlets[meshletID].coneApex.xyz, 1.0));
-    // cone axis must be translated into world coordinates as well
-    // although we need to ignore translation this time since axis is a vector
-    // which has no position
-    vec3 coneAxis = normalize(mat3(mvp.model) * meshlets[meshletID].cone.xyz);
-    // get the cone spread as -sin(A)
-    float coneW = meshlets[meshletID].cone.w;
-    if (coneCull(coneAxis, coneW, cameraPos, coneApex)) {
-        if (tid == 0) {
-            gl_PrimitiveCountNV = 0;
-        }
-        return;
-    }
     
     // each thread must process a vertex
     for (uint i = tid; i < meshlets[meshletID].vertexCount; i+=32) {
