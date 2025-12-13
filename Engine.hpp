@@ -16,7 +16,18 @@ struct SurfaceDetails {
 };
 
 struct Vertex {
-    uint16_t vx, vy, vz, vw;
+    // ideally we could have uint16_t/float16 for vertex position, 
+    // and it does work, but then the number of meshlets that we can cull with cones
+    // decreases a lot. This is a result of cones getting too wide, so we can't cull them
+    // and end up having to rely on backface culling later
+    // in fact, having half precision may even collapse a triangle into a 0-area triangle
+    // which is supposed to break the program during glm::normalize(...), but for some reason
+    // it doesn't happen even with high poly meshes like dragon
+    // matter of fact, high poly meshes shouldn't really benefit from cone culling at all
+    // since mesh details are rendered using pure geometry, so we are supposed to end up
+    // with too wide cones even with full precision
+    // perhaps dragon is not that high poly? 
+    float vx, vy, vz, vw; // vw is only used for alignment
     uint8_t nx, ny, nz, nw; // nw is only used for alignment
     uint16_t tu, tv;
     // binding descriptions specify at which rate to load data
@@ -217,7 +228,7 @@ private:
     const int MAX_FRAMES_IN_FLIGHT = 4;
     uint32_t currentFrame = 0;
     std::vector<float> gpuTimes;
-    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/kitten.obj";
+    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/dragon.obj";
     const std::string TEXTURE_PATH = std::string(PROJECT_ROOT) + "/textures/viking_room.png";
     const std::string VERT_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv";
     const std::string MESH_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv";

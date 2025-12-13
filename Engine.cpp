@@ -207,9 +207,9 @@ void Engine::loadModel() {
     for (const auto& shape : shapes) {
         for (const auto& index : shape.mesh.indices) {
             Vertex vertex{};
-            vertex.vx = floatToHalf(attrib.vertices[3 * index.vertex_index + 0]);
-            vertex.vy = floatToHalf(attrib.vertices[3 * index.vertex_index + 1]);
-            vertex.vz = floatToHalf(attrib.vertices[3 * index.vertex_index + 2]);
+            vertex.vx = (attrib.vertices[3 * index.vertex_index + 0]);
+            vertex.vy = (attrib.vertices[3 * index.vertex_index + 1]);
+            vertex.vz = (attrib.vertices[3 * index.vertex_index + 2]);
 
             glm::vec3 uncompressed = glm::vec3(0.0f, 0.0f, 0.0f);
             if (!attrib.normals.empty()) {
@@ -428,9 +428,9 @@ void Engine::buildMeshletCons() {
             const Vertex& v2 = vertices[meshlet.vertices[i2]];
 
             // we return to full precision as half precision messes up the cull test
-            glm::vec3 p0 = glm::vec3(halfToFloat(v0.vx), halfToFloat(v0.vy), halfToFloat(v0.vz));
-            glm::vec3 p1 = glm::vec3(halfToFloat(v1.vx), halfToFloat(v1.vy), halfToFloat(v1.vz));
-            glm::vec3 p2 = glm::vec3(halfToFloat(v2.vx), halfToFloat(v2.vy), halfToFloat(v2.vz));
+            glm::vec3 p0 = glm::vec3((v0.vx), (v0.vy), (v0.vz));
+            glm::vec3 p1 = glm::vec3((v1.vx), (v1.vy), (v1.vz));
+            glm::vec3 p2 = glm::vec3((v2.vx), (v2.vy), (v2.vz));
 
             glm::vec3 p10 = p1-p0;
             glm::vec3 p20 = p2-p0;
@@ -476,9 +476,9 @@ void Engine::buildMeshletCons() {
         meshlet.cone[3] = coneW;
 
         for (uint8_t i=0; i<meshlet.vertexCount; i++) {
-            meshlet.coneApex[0]+=(halfToFloat(vertices[meshlet.vertices[i]].vx))/float(meshlet.vertexCount);
-            meshlet.coneApex[1]+=(halfToFloat(vertices[meshlet.vertices[i]].vy))/float(meshlet.vertexCount);
-            meshlet.coneApex[2]+=(halfToFloat(vertices[meshlet.vertices[i]].vz))/float(meshlet.vertexCount);
+            meshlet.coneApex[0]+=((vertices[meshlet.vertices[i]].vx))/float(meshlet.vertexCount);
+            meshlet.coneApex[1]+=((vertices[meshlet.vertices[i]].vy))/float(meshlet.vertexCount);
+            meshlet.coneApex[2]+=((vertices[meshlet.vertices[i]].vz))/float(meshlet.vertexCount);
         }
     }
 }
