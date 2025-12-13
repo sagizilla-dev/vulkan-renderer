@@ -13,6 +13,9 @@ file(GLOB_RECURSE SHADER_SOURCES
     "${CMAKE_SOURCE_DIR}/shaders/*.mesh"
     "${CMAKE_SOURCE_DIR}/shaders/*.task"
 )
+set(SHADER_HEADERS
+    ${CMAKE_SOURCE_DIR}/shaders/common.h
+)
 foreach(SHADER ${SHADER_SOURCES})
     get_filename_component(SHADER_NAME ${SHADER} NAME)
     get_filename_component(SHADER_DIR  ${SHADER} DIRECTORY)
@@ -20,7 +23,7 @@ foreach(SHADER ${SHADER_SOURCES})
     add_custom_command(
         OUTPUT ${SPIRV_OUTPUT}
         COMMAND ${GLSLC} ${SHADER} -o ${SPIRV_OUTPUT} --target-env=vulkan1.4
-        DEPENDS ${SHADER}
+        DEPENDS ${SHADER} ${SHADER_HEADERS}
         COMMENT "Compiling ${SHADER_NAME} to SPIR-V"
     )
     list(APPEND SPIRV_BINARIES ${SPIRV_OUTPUT})

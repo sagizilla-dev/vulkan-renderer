@@ -16,7 +16,7 @@ struct SurfaceDetails {
 };
 
 struct Vertex {
-    uint16_t vx, vy, vz;
+    uint16_t vx, vy, vz, vw;
     uint8_t nx, ny, nz, nw; // nw is only used for alignment
     uint16_t tu, tv;
     // binding descriptions specify at which rate to load data
