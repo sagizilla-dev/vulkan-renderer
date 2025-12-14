@@ -77,10 +77,10 @@ struct Meshlet {
     // calculate the view vector
     float coneApex[4]; // vec3 is padded to vec4 anyways
     uint32_t vertices[64];
-    uint8_t indices[126*3];
+    uint8_t indices[124*3];
     uint8_t triangleCount;
     uint8_t vertexCount;
-    float padding; // for alignment
+    uint8_t padding[10]; // padding
 };
 
 struct MVP {
@@ -228,7 +228,7 @@ private:
     const int MAX_FRAMES_IN_FLIGHT = 4;
     uint32_t currentFrame = 0;
     std::vector<float> gpuTimes;
-    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/buddha.obj";
+    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/kitten.obj";
     const std::string TEXTURE_PATH = std::string(PROJECT_ROOT) + "/textures/viking_room.png";
     const std::string VERT_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv";
     const std::string MESH_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv";

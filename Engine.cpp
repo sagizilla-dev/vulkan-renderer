@@ -114,14 +114,16 @@ void Engine::run() {
                 float gpuTimeMs = (delta * timestampPeriod) / 1000000.0f;
                 gpuTimes.push_back(gpuTimeMs);
                 // output stats every 200 frames
+                double trianglesPerSec = (indices.size()/3) / (gpuTimeMs*1e-3);
                 if (gpuTimes.size()==200) {
                     char title[256];
                     float avgGpuTime = 0.0f;
                     for (int i=0; i<200; i++) {
                         avgGpuTime+=gpuTimes[i]/200;
                     }
-                    snprintf(title, sizeof(title), "GPU Time: %.3f ms (%.1f FPS), %i meshlets, %i vertices", 
-                            avgGpuTime, 1000.0f / avgGpuTime, int(meshlets.size()), int(vertices.size()));
+                    snprintf(title, sizeof(title), "GPU Time: %.3f ms, %i meshlets, %i vertices, %i triangles, %.2fB tri/sec", 
+                            avgGpuTime, int(meshlets.size()), int(vertices.size()), int(indices.size())/3, 
+                            trianglesPerSec*1e-9);
                     glfwSetWindowTitle(window, title);
                     gpuTimes.clear();
                 }
@@ -417,7 +419,7 @@ void Engine::optimizeGeometry() {
 void Engine::buildMeshletCons() {
     for (Meshlet& meshlet: meshlets) {
         // first we need to calculate triangle normals
-        float normals[126][3];
+        float normals[124][3];
         for (uint8_t i=0; i<meshlet.triangleCount; i++) {
             uint8_t i0 = meshlet.indices[i*3+0];
             uint8_t i1 = meshlet.indices[i*3+1];
@@ -497,7 +499,7 @@ void Engine::createMeshlets() {
 		uint8_t& cv = meshletVertices[c];
 
         // if av == 0xff, it means the vertex is not in the meshlet and we need to add it
-		if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.triangleCount >= 126) {
+		if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.triangleCount >= 124) {
             meshlets.push_back(meshlet);
 			for (int j = 0; j < meshlet.vertexCount; j++)
 				meshletVertices[meshlet.vertices[j]] = 0xff;

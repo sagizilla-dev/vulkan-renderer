@@ -13,7 +13,7 @@ layout(triangles) out;
 // to reserve 4 bytes for the primitive count
 // therefore 3*126+4 maximizes the fit into 128*3 bytes block
 // going beyond 126 allocates the next 128 bytes
-layout(max_vertices = 64, max_primitives = 126) out;
+layout(max_vertices = 64, max_primitives = 124) out;
 
 layout(set = 0, binding = 0) uniform MVP {
     mat4 model;
@@ -74,13 +74,17 @@ void main() {
         TexCoords[i] = vec2(vertices[globalVertexID].tu, vertices[globalVertexID].tv);
     }
 
-    // each thread must process a triangle now
-    for (uint i = tid; i < meshlets[meshletID].triangleCount; i+=32) {
-        uint indexOffset = i * 3;
-        // those indices are local, they refer to gl_MeshVerticesNV
-        gl_PrimitiveIndicesNV[indexOffset + 0] = meshlets[meshletID].indices[indexOffset + 0];
-        gl_PrimitiveIndicesNV[indexOffset + 1] = meshlets[meshletID].indices[indexOffset + 1]; 
-        gl_PrimitiveIndicesNV[indexOffset + 2] = meshlets[meshletID].indices[indexOffset + 2]; 
+    // we use writePackedPrimitiveIndices4x8NV(...) to write 4 primitive indices at once from 
+    // a packed uint32_t into gl_PrimitiveIndicesNV
+    // we need to round up the number of indices though, i.e
+    // if we have 123*3 = 369 uint8_t indices, they are packed into 92 uint32_t indices and 1 uint8_t index
+    // but we need unit32_t to operate with writePackedPrimitiveIndices4x8NV, so we must round up the number of packed
+    // indices to 93
+    uint packedIndexCount = (meshlets[meshletID].triangleCount*3+3)/4;
+    for (uint i = tid; i < packedIndexCount; i+=32) {
+        // offset is the offset within gl_PrimitiveIndicesNW
+        // these indices are local, they refer to gl_MeshVerticesNV, not the global vertex buffer
+        writePackedPrimitiveIndices4x8NV(i*4, meshlets[meshletID].indices[i]);
     }
 
     if (tid==0) {

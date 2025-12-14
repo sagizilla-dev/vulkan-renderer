@@ -9,14 +9,17 @@ struct Vertex {
 // having 126*3 uint8_t sub indices and 64 uint32_t global indices make up for 126*3 + 64*4 = 634 bytes
 // another important feature of double indexing is vertex de duplication
 // meaning the global vertex at any index is stored only once in the vertex buffer
+// using 124 triangles instead of 126 triangles benefits in case we decide to
+// pack 4 uint8_t indices into 1 uint32_t index, which allows us to use
+// writePackedIndices4x8NV(...) function in GLSL
 struct Meshlet {
-    vec4 cone;              // offset 0, alignment 16
-    vec4 coneApex;          // offset 16, alignment 16
-    uint32_t vertices[64];  // offset 32, alignment 4
-    uint8_t indices[126*3]; // offset 288, alignment 1
-    uint8_t triangleCount;  // offset 666, alignment 1
-    uint8_t vertexCount;    // offset 667, alignment 1
-    float padding;          // offset 668, alignment 4
+    vec4 cone;              // offset 0,   alignment 16
+    vec4 coneApex;          // offset 16,  alignment 16
+    uint32_t vertices[64];  // offset 32,  alignment 4
+    uint indices[124*3/4];  // offset 288, alignment 4
+    uint8_t triangleCount;  // offset 660, alignment 1
+    uint8_t vertexCount;    // offset 661, alignment 1
+    uint8_t padding[10];    // offset 662, alignment 1
 };
 // largest alignment is 16
 
