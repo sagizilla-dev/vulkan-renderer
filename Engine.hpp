@@ -16,17 +16,17 @@ struct SurfaceDetails {
 };
 
 struct Vertex {
-    // ideally we could have uint16_t/float16 for vertex position, 
+    // ideally we could have uint16_t/float16 for vertex positions, 
     // and it does work, but then the number of meshlets that we can cull with cones
     // decreases a lot. This is a result of cones getting too wide, so we can't cull them
-    // and end up having to rely on backface culling later
+    // and end up having to rely on backface culling later.
     // in fact, having half precision may even collapse a triangle into a 0-area triangle
     // which is supposed to break the program during glm::normalize(...), but for some reason
-    // it doesn't happen even with high poly meshes like dragon
+    // it doesn't happen even with high poly meshes like dragon.obj or buddha.obj
     // matter of fact, high poly meshes shouldn't really benefit from cone culling at all
     // since mesh details are rendered using pure geometry, so we are supposed to end up
     // with too wide cones even with full precision
-    // perhaps dragon is not that high poly? 
+    // perhaps dragon and buddha are not that high poly?
     float vx, vy, vz, vw; // vw is only used for alignment
     uint8_t nx, ny, nz, nw; // nw is only used for alignment
     uint16_t tu, tv;
@@ -71,7 +71,7 @@ namespace std {
 }
 struct Meshlet {
     // cone[0:3] describes the cone axis as an average of all normals within the meshlet
-    // cone[3] describes the sin(A), where A is the half angle of the cone (angle between the furthest normal and cone axis)
+    // cone[3] describes the -cos(A+90 deg), where A is the half angle of the cone (angle between the furthest normal and cone axis)
     float cone[4];
     // cone apex is the average of all vertices within the meshlet, it is needed to
     // calculate the view vector
@@ -97,7 +97,7 @@ struct DescriptorResourceInfo {
     uint32_t descriptorCount; // number of descriptors in the array (if it is an array)
     std::string name;
     // since Mesh shader and Vertex shader contain exactly the same descriptors, it is possible
-    // to put them into the same struct but define multiple stages
+    // to put them into the same struct but define multiple stages using | operator
     VkShaderStageFlags stage;
     // this operator is used to push DescriptorResourceInfo into std::set
     bool operator<(const DescriptorResourceInfo& other) const {
@@ -107,7 +107,7 @@ struct DescriptorResourceInfo {
 };
 struct Shader {
     VkShaderModule module;
-    // a shader can only belong to one stage
+    // a shader can only belong to one stage, therefore use of VkShaderStageFlagBits instead of VkShaderStageFlags
     VkShaderStageFlagBits stage;
     std::vector<uint32_t> code; // vector of words (1 word = uint32_t = 4 bytes)
     uint32_t codeSize; // size in bytes
@@ -185,7 +185,7 @@ private:
     void loadModel();
     float computeVertexScore(int cachePosition, int valence);
     void optimizeGeometry();
-    void buildMeshletCons();
+    void buildMeshletCon(Meshlet& meshlet);
     void createMeshlets();
     void createInstance();
     void createSurface();
@@ -206,7 +206,6 @@ private:
     void createCommandBuffer(VkCommandBuffer* cmdBuffer, int count, VkCommandPool& cmdPool);
     void createSemaphore(VkSemaphore& sem);
     void destroySemaphore(VkSemaphore& sem);
-    // VK_FENCE_CREATE_SIGNALED_BIT means fence is created as already signaled
     void createFence(VkFence& fence, VkFenceCreateFlags flags = VK_FENCE_CREATE_SIGNALED_BIT);
     void destroyFence(VkFence& fence);
     void cleanupSwapchain();

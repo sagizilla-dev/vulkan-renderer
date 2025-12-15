@@ -15,7 +15,6 @@ Engine::Engine() {
     createWindow();
     loadModel();
     createMeshlets();
-    buildMeshletCons();
     createInstance();
     createSurface();
     createDevice();
@@ -143,8 +142,9 @@ void Engine::run() {
             throw std::runtime_error("Couldn't acquire next image");
         }
 
-        // reset the fence only after acquiring the next image - it is important to avoid deadlock 
-        // otherwise, if swapchain is recreated, fence is reset but we are still waiting on it
+        // reset the fence only after acquiring the next image
+        // it is important to avoid deadlock, otherwise if swapchain is 
+        // recreated, fence is reset but we are still waiting on it
         vkResetFences(device, 1, &cmdBufferReady[currentFrame]);
 
         vkResetCommandBuffer(cmdBuffer[currentFrame], 0);
@@ -237,24 +237,29 @@ void Engine::loadModel() {
             indices.push_back(uniqueVertices[vertex]);
         }
     }
-    // geometry optimization here is pretty important
-    // first of all, we need to reorder indices inside the index buffer
-    // so that consecutive triangles share vertices
-    // this maximizes vertex cache efficiency, i.e.
-    // vertices that have already been transformed are stored, 
-    // retrieval doesn't cost us anything
-    // secondly, we need o reorder vertex buffer
-    // so that vertices that are accessed one after another are stored
-    // close to each other
+    // geometry optimization here is pretty important.
+    // first of all, we need to reorder indices inside the index buffer so that consecutive triangles share vertices.
+    // this maximizes vertex cache efficiency, i.e vertices that have already been transformed are stored, 
+    // and retrieval doesn't cost us anything.
+    optimizeGeometry();
+    // secondly, we need to reorder vertex buffer so that vertices that are accessed one after another are stored
+    // close to each other.
     // this maximizes memory locality and global memory coalescing
     
-    // overall, bigger meshlets = fewer unique vertices per meshlet = fewer shader invocations
-    // it is important to build meshlets in a way that maximize the number of triangles per meshlets,
+    // for geometry and meshlets, bigger meshlets = fewer unique vertices per meshlet = fewer shader invocations.
+    // it is important to build meshlets in a way that maximizes the number of triangles per meshlets,
     // not vertices per meshlets
     // otherwise we end up with scatterred triangles belonging to the same meshlet
-    optimizeGeometry();
+    // this is actually pretty bad for the current pipeline since we need to perform cone culling
+    // which is pretty much useless when meshlets are not contiguous (cones are just too wide).
+    // in theory, Forsyth's algorithm is supposed to give us an index buffer where each triangle is connected 
+    // to another, therefore creating a big chain of triangles wrapping the entire mesh
+    // unfortunately, this is not the case because .obj file contains geometrical duplicates, i.e
+    // vertices that share the same position but have different normal or UV coordinates
+    // those isolated triangles' vertices have very low valence (1), therefore making Forsyth's push them to
+    // the very beginning. There are also vertices that have valence of 2, which is also very low.
 }
-// calculate vertex score based off its cache position (higher for vertices recently used)
+// calculate vertex score based on its cache position (higher for vertices recently used)
 // and valence (prefer vertices shared by fewer remaining triangles so that the vertex can be evicted
 // from cache sooner)
 float Engine::computeVertexScore(int cachePosition, int valence) {
@@ -264,7 +269,7 @@ float Engine::computeVertexScore(int cachePosition, int valence) {
         return -1.0f; // dead vertex, no triangles left
     }
     
-    // calcualte score based off its cache position
+    // calcualte score based on its cache position
     float cacheScore = 0.0f;
     if (cachePosition < 0) {
         cacheScore = 0.0f; // not in cache
@@ -278,7 +283,7 @@ float Engine::computeVertexScore(int cachePosition, int valence) {
         cacheScore = std::pow(1.0f - normalizedPosition, 1.5f); 
     }
 
-    // calculate score based off valence (fewer unprocessed triangles means higher the score)
+    // calculate score based on its valence (fewer unprocessed triangles means higher the score)
     // valence boost scale is 2.0f, which defines the strength of the heuristic
     // valence boost power is 0.5f, which produces diminishing returns for vertices that appear in
     // many triangles
@@ -345,6 +350,11 @@ void Engine::optimizeGeometry() {
         int bestTriangle = nextBestTriangle;
         float bestScore = bestTriangle >= 0 ? triangleScore[bestTriangle] : std::numeric_limits<float>::min();
         if (bestTriangle < 0 || isTriangleFinished[bestTriangle]) { // no candidate or the triangle has been processed
+            // this branch is taken either at the very beginning, or if our cache got old, i.e there were
+            // no vertices in cache that would lead us to an unprocessed triangle
+            // this happens when we processed all isolated triangles, or 
+            // we processed a region that is surrounded by isolated triangles, or
+            // the bridge between two regions got evicted before we finished the first region
             bestTriangle = -1;
             bestScore = std::numeric_limits<float>::min();
             for (uint32_t j=0; j<triangleCount; j++) {
@@ -416,76 +426,74 @@ void Engine::optimizeGeometry() {
     }
     indices = reorderedIndexBuffer;
 }
-void Engine::buildMeshletCons() {
-    for (Meshlet& meshlet: meshlets) {
-        // first we need to calculate triangle normals
-        float normals[124][3];
-        for (uint8_t i=0; i<meshlet.triangleCount; i++) {
-            uint8_t i0 = meshlet.indices[i*3+0];
-            uint8_t i1 = meshlet.indices[i*3+1];
-            uint8_t i2 = meshlet.indices[i*3+2];
+void Engine::buildMeshletCon(Meshlet& meshlet) {
+    // first we need to calculate triangle normals
+    float normals[124][3];
+    for (uint8_t i=0; i<meshlet.triangleCount; i++) {
+        uint8_t i0 = meshlet.indices[i*3+0];
+        uint8_t i1 = meshlet.indices[i*3+1];
+        uint8_t i2 = meshlet.indices[i*3+2];
 
-            const Vertex& v0 = vertices[meshlet.vertices[i0]];
-            const Vertex& v1 = vertices[meshlet.vertices[i1]];
-            const Vertex& v2 = vertices[meshlet.vertices[i2]];
+        const Vertex& v0 = vertices[meshlet.vertices[i0]];
+        const Vertex& v1 = vertices[meshlet.vertices[i1]];
+        const Vertex& v2 = vertices[meshlet.vertices[i2]];
 
-            // we return to full precision as half precision messes up the cull test
-            glm::vec3 p0 = glm::vec3((v0.vx), (v0.vy), (v0.vz));
-            glm::vec3 p1 = glm::vec3((v1.vx), (v1.vy), (v1.vz));
-            glm::vec3 p2 = glm::vec3((v2.vx), (v2.vy), (v2.vz));
+        // we return to full precision as half precision messes up the cull test
+        glm::vec3 p0 = glm::vec3((v0.vx), (v0.vy), (v0.vz));
+        glm::vec3 p1 = glm::vec3((v1.vx), (v1.vy), (v1.vz));
+        glm::vec3 p2 = glm::vec3((v2.vx), (v2.vy), (v2.vz));
 
-            glm::vec3 p10 = p1-p0;
-            glm::vec3 p20 = p2-p0;
+        glm::vec3 p10 = p1-p0;
+        glm::vec3 p20 = p2-p0;
 
-            // direction of normal is defined by the winding order
-            glm::vec3 normal = glm::normalize(glm::cross(p10, p20));
-            normals[i][0] = normal.x;
-            normals[i][1] = normal.y;
-            normals[i][2] = normal.z;
-        }
+        // direction of normal is defined by the winding order
+        glm::vec3 normal = glm::normalize(glm::cross(p10, p20));
+        normals[i][0] = normal.x;
+        normals[i][1] = normal.y;
+        normals[i][2] = normal.z;
+    }
 
-        // average normal (cone's axis) for the entire meshlet
-        glm::vec3 avgNormal = glm::vec3(0.0f);
-        for (uint8_t i=0; i<meshlet.triangleCount; i++) {
-            avgNormal+=glm::vec3(normals[i][0], normals[i][1], normals[i][2]);
-        }
-        avgNormal = glm::normalize(avgNormal);
+    // average normal (cone's axis) for the entire meshlet
+    glm::vec3 avgNormal = glm::vec3(0.0f);
+    for (uint8_t i=0; i<meshlet.triangleCount; i++) {
+        avgNormal+=glm::vec3(normals[i][0], normals[i][1], normals[i][2]);
+    }
+    avgNormal = glm::normalize(avgNormal);
 
-        // the cosine of the angle between average normal and furthest triangle normal
-        // if this value is 0, some normals are orthogonal to other normals
-        // the bigger this value, the smaller the spread of the cone is, which is good for culling!
-        float halfAngle = 1.0f;
-        for (uint8_t i=0; i<meshlet.triangleCount; i++) {
-            float dp = normals[i][0]*avgNormal.x + normals[i][1]*avgNormal.y + normals[i][2]*avgNormal.z;
-            halfAngle = std::min(halfAngle, dp);
-        }
+    // the cosine of the angle between average normal and furthest triangle normal.
+    // if this value is 0, some normals are orthogonal to other normals
+    // the bigger this value, the smaller the spread of the cone is, which is good for culling!
+    float halfAngle = 1.0f;
+    for (uint8_t i=0; i<meshlet.triangleCount; i++) {
+        float dp = normals[i][0]*avgNormal.x + normals[i][1]*avgNormal.y + normals[i][2]*avgNormal.z;
+        halfAngle = std::min(halfAngle, dp);
+    }
 
-        // to prove the meshlet is not visible, we need to check whether all normals within the cone
-        // point away from the camera, i.e dot product between view vector and any normal is negative as the angle
-        // is more than 90 degrees
-        // since the angle between average normal and furthest normal is A, we can
-        // write the inequality as angle(View, AvgNormal) > 90 deg + A.
-        // if it is true, we can cull the entire meshlet
-        // in other words, the cone test is: dot(View, AvgNormal) < cos(90+A), or 
-        // dot(View, AvgNormal) < -sin(A)
-        // note that if the cone's half angle is more than 90 degrees, we cannot
-        // cull this meshlet, which is a usual case for high poly meshes
-        // if that's the case, clip the angle to 90 degrees
-        float coneW = halfAngle < 0.0f ? 1.0f : sqrtf(1-halfAngle*halfAngle);
-        meshlet.cone[0] = avgNormal.x;
-        meshlet.cone[1] = avgNormal.y;
-        meshlet.cone[2] = avgNormal.z;
-        meshlet.cone[3] = coneW;
+    // to prove the meshlet is not visible, we need to check whether all normals within the cone
+    // point away from the camera, i.e dot product between view vector and any normal is negative as the angle
+    // is more than 90 degrees
+    // since the angle between average normal and furthest normal is A, we can
+    // write the inequality as angle(View, AvgNormal) > 90 deg + A.
+    // if it is true, we can cull the entire meshlet
+    // in other words, the cone test is: dot(View, AvgNormal) < cos(90+A), or 
+    // dot(View, AvgNormal) < -sin(A)
+    // note that if the cone's half angle is more than 90 degrees, we cannot
+    // cull this meshlet, which is a usual case for high poly meshes
+    // if that's the case, clip the angle to 90 degrees
+    float coneW = halfAngle < 0.0f ? 1.0f : sqrtf(1-halfAngle*halfAngle);
+    meshlet.cone[0] = avgNormal.x;
+    meshlet.cone[1] = avgNormal.y;
+    meshlet.cone[2] = avgNormal.z;
+    meshlet.cone[3] = coneW;
 
-        for (uint8_t i=0; i<meshlet.vertexCount; i++) {
-            meshlet.coneApex[0]+=((vertices[meshlet.vertices[i]].vx))/float(meshlet.vertexCount);
-            meshlet.coneApex[1]+=((vertices[meshlet.vertices[i]].vy))/float(meshlet.vertexCount);
-            meshlet.coneApex[2]+=((vertices[meshlet.vertices[i]].vz))/float(meshlet.vertexCount);
-        }
+    for (uint8_t i=0; i<meshlet.vertexCount; i++) {
+        meshlet.coneApex[0]+=((vertices[meshlet.vertices[i]].vx))/float(meshlet.vertexCount);
+        meshlet.coneApex[1]+=((vertices[meshlet.vertices[i]].vy))/float(meshlet.vertexCount);
+        meshlet.coneApex[2]+=((vertices[meshlet.vertices[i]].vz))/float(meshlet.vertexCount);
     }
 }
 void Engine::createMeshlets() {
-    Meshlet meshlet = {};
+    Meshlet meshlet{};
     // this maps vertex to its status inside the meshlet, i.e whether it's already been added or not
     // if it has been added, it contains the local vertex index
 	std::vector<uint8_t> meshletVertices(vertices.size(), 0xff);
@@ -498,13 +506,14 @@ void Engine::createMeshlets() {
 		uint8_t& bv = meshletVertices[b];
 		uint8_t& cv = meshletVertices[c];
 
-        // if av == 0xff, it means the vertex is not in the meshlet and we need to add it
 		if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.triangleCount >= 124) {
+            buildMeshletCon(meshlet);
             meshlets.push_back(meshlet);
 			for (int j = 0; j < meshlet.vertexCount; j++)
 				meshletVertices[meshlet.vertices[j]] = 0xff;
 			meshlet = {};
 		}
+        // if av == 0xff, it means the vertex is not in the meshlet and we need to add it
 		if (av == 0xff) {
 			av = meshlet.vertexCount;
 			meshlet.vertices[meshlet.vertexCount++] = a;
@@ -523,6 +532,7 @@ void Engine::createMeshlets() {
 		meshlet.indices[meshlet.triangleCount * 3 + 2] = cv;
         meshlet.triangleCount++;
 	}
+    // the last meshlet may not have hit any limit on vertices or triangles
 	if (meshlet.triangleCount)
 		meshlets.push_back(meshlet);
 }
@@ -729,7 +739,7 @@ void Engine::createDescriptorUpdateTemplate() {
         // since the function vkUpdateDescriptorSetWithTemplate() accepts void* data, we can specify our own
         // data class to hold the data, so we need to provide details about it
         entries[i].stride = sizeof(DescriptorData); // spacing between consecutive descriptors (same for all entries since array is tightly packed)
-        entries[i].offset = sizeof(DescriptorData)*i; // offset in the provided data array, used to find the correct descriptor data
+        entries[i].offset = sizeof(DescriptorData)*i; // offset in the provided data array, is used to find the correct descriptor data
         i++;
     }
 
@@ -742,7 +752,7 @@ void Engine::createDescriptorUpdateTemplate() {
 void Engine::createDescriptorPool() {
     std::vector<VkDescriptorPoolSize> poolSizes(3);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    // number of descriptors of a specific time
+    // number of descriptors of a specific type
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
@@ -955,7 +965,7 @@ void Engine::createRenderpass() {
     attachmentDescriptions[1].samples = msaaSamples;
     attachmentDescriptions[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachmentDescriptions[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    // resolve buffer / swapchain image
+    // resolve buffer (swapchain image)
     attachmentDescriptions[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     attachmentDescriptions[2].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
     attachmentDescriptions[2].format = swapchainFormat;
@@ -1065,6 +1075,7 @@ void Engine::destroySemaphore(VkSemaphore& sem) {
     vkDestroySemaphore(device, sem, nullptr);
 }
 void Engine::createFence(VkFence& fence, VkFenceCreateFlags flags) {
+    // VK_FENCE_CREATE_SIGNALED_BIT flag means fence is created as already signaled
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = flags;
@@ -1703,12 +1714,10 @@ void Engine::parseSPIRV(Shader& shader) {
                     uint32_t decoration = instr[2];
                     
                     if (decoration == SpvDecorationDescriptorSet) {
-                        // we are decorating it with a descriptor set, i.e
-                        // put this descriptor into set X
+                        // we are decorating it with a descriptor set, i.e put this descriptor into set X
                         descriptorSetDecorations[targetId] = instr[3];
                     } else if (decoration == SpvDecorationBinding) {
-                        // we are decorating it with a descriptor binding number, i.e
-                        // put this descriptor at binding X 
+                        // we are decorating it with a descriptor binding number, i.e put this descriptor at binding X 
                         descriptorBindingDecorations[targetId] = instr[3];
                     }
                 }
@@ -1761,13 +1770,12 @@ void Engine::parseSPIRV(Shader& shader) {
                             // as per SPIR-V specs, by the time we hit OpVariable, all decorations must have been processed
                             descriptorResourceInfo.set = descriptorSetDecorations[resultId];
                             descriptorResourceInfo.binding = descriptorBindingDecorations[resultId];
-                            // as per SPIR-V specs OpVariable and OpTypePointer are in the same section, so there is actually
-                            // a chance descriptor type for the 
+                            // as per SPIR-V specs, OpVariable and OpTypePointer are in the same section
                             descriptorResourceInfo.type = descriptorTypes[typeId];
                             descriptorResourceInfo.descriptorCount = 1;
                             descriptorResourceInfo.name = names[resultId];
                             
-                            // as per SPIR-V specs pEntryPoint instruction has been reached before OpVariable 
+                            // as per SPIR-V specs, pEntryPoint instruction must have been reached before OpVariable 
                             descriptorResourceInfo.stage = shader.stage;
 
                             // in case there is another shader that has already defined a descriptor of the same binding 
@@ -1835,15 +1843,19 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
         // VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS means the render pass commands will be executed from secondary command buffer
         vkCmdBeginRenderPass(cmdBuffer, &renderpassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
         {
-            if (meshShadersEnabled)
+            if (meshShadersEnabled) {
                 vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshGraphicsPipeline);
-            else
+
+            } else {
                 vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+            }
 
             // first set is the set number of the first descriptor set to be bound from the provided descriptorSets array
             vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
-            vkCmdBindIndexBuffer(cmdBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            if (!meshShadersEnabled) {
+                vkCmdBindIndexBuffer(cmdBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            }
 
             VkViewport viewport{};
             viewport.x = 0.0f;
