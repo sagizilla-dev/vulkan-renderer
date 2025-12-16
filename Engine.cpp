@@ -533,8 +533,9 @@ void Engine::createMeshlets() {
         meshlet.triangleCount++;
 	}
     // the last meshlet may not have hit any limit on vertices or triangles
-	if (meshlet.triangleCount)
+	if (meshlet.triangleCount) {
 		meshlets.push_back(meshlet);
+    }
 }
 void Engine::createInstance() {
     VkApplicationInfo appInfo{};
@@ -1845,7 +1846,6 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
         {
             if (meshShadersEnabled) {
                 vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshGraphicsPipeline);
-
             } else {
                 vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
             }
