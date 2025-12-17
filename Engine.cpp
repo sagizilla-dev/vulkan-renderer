@@ -30,6 +30,7 @@ Engine::Engine() {
     createTextureSampler();
     createVertexBuffer();
     createIndexBuffer();
+    createMeshletDataBuffer();
     createMeshletBuffer();
     createShaders();
     createDescriptorSetLayout();
@@ -41,6 +42,8 @@ Engine::Engine() {
 }
 Engine::~Engine() {
     vkDestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, nullptr);
+    vkDestroyBuffer(device, meshletDataBuffer, nullptr);
+    vkFreeMemory(device, meshletDataBufferMemory, nullptr);
     vkDestroyBuffer(device, meshletBuffer, nullptr);
     vkFreeMemory(device, meshletBufferMemory, nullptr);
     vkDestroySampler(device, textureSampler, nullptr);
@@ -113,13 +116,13 @@ void Engine::run() {
                 float gpuTimeMs = (delta * timestampPeriod) / 1000000.0f;
                 gpuTimes.push_back(gpuTimeMs);
                 // output stats every 200 frames
-                double trianglesPerSec = (indices.size()/3) / (gpuTimeMs*1e-3);
                 if (gpuTimes.size()==200) {
                     char title[256];
                     float avgGpuTime = 0.0f;
                     for (int i=0; i<200; i++) {
                         avgGpuTime+=gpuTimes[i]/200;
                     }
+                    double trianglesPerSec = (indices.size()/3) / (avgGpuTime*1e-3);
                     snprintf(title, sizeof(title), "GPU Time: %.3f ms, %i meshlets, %i vertices, %i triangles, %.2fB tri/sec", 
                             avgGpuTime, int(meshlets.size()), int(vertices.size()), int(indices.size())/3, 
                             trianglesPerSec*1e-9);
@@ -426,17 +429,17 @@ void Engine::optimizeGeometry() {
     }
     indices = reorderedIndexBuffer;
 }
-void Engine::buildMeshletCon(Meshlet& meshlet) {
+void Engine::buildMeshletCon(Meshlet& meshlet, std::vector<uint32_t> globalIndices, std::vector<uint8_t> localIndices) {
     // first we need to calculate triangle normals
     float normals[124][3];
     for (uint8_t i=0; i<meshlet.triangleCount; i++) {
-        uint8_t i0 = meshlet.indices[i*3+0];
-        uint8_t i1 = meshlet.indices[i*3+1];
-        uint8_t i2 = meshlet.indices[i*3+2];
+        uint8_t localIndex0 = localIndices[i*3+0];
+        uint8_t localIndex1 = localIndices[i*3+1];
+        uint8_t localIndex2 = localIndices[i*3+2];
 
-        const Vertex& v0 = vertices[meshlet.vertices[i0]];
-        const Vertex& v1 = vertices[meshlet.vertices[i1]];
-        const Vertex& v2 = vertices[meshlet.vertices[i2]];
+        const Vertex& v0 = vertices[globalIndices[localIndex0]];
+        const Vertex& v1 = vertices[globalIndices[localIndex1]];
+        const Vertex& v2 = vertices[globalIndices[localIndex2]];
 
         // we return to full precision as half precision messes up the cull test
         glm::vec3 p0 = glm::vec3((v0.vx), (v0.vy), (v0.vz));
@@ -487,54 +490,90 @@ void Engine::buildMeshletCon(Meshlet& meshlet) {
     meshlet.cone[3] = coneW;
 
     for (uint8_t i=0; i<meshlet.vertexCount; i++) {
-        meshlet.coneApex[0]+=((vertices[meshlet.vertices[i]].vx))/float(meshlet.vertexCount);
-        meshlet.coneApex[1]+=((vertices[meshlet.vertices[i]].vy))/float(meshlet.vertexCount);
-        meshlet.coneApex[2]+=((vertices[meshlet.vertices[i]].vz))/float(meshlet.vertexCount);
+        meshlet.coneApex[0]+=((vertices[globalIndices[i]].vx))/float(meshlet.vertexCount);
+        meshlet.coneApex[1]+=((vertices[globalIndices[i]].vy))/float(meshlet.vertexCount);
+        meshlet.coneApex[2]+=((vertices[globalIndices[i]].vz))/float(meshlet.vertexCount);
     }
 }
 void Engine::createMeshlets() {
     Meshlet meshlet{};
+    meshlet.dataOffset = meshletData.size();
+    // this is an array of indices that point to global vertex array, 
+    // range  of values is [0, vertices.size()), max size is 64
+    std::vector<uint32_t> currentVertices;
+    // this is an array of indices that point to local vertex indices (currentVertices), 
+    // range is [0, meshlet.vertexCount), max size is 124*3
+    std::vector<uint8_t> currentIndices;
     // this maps vertex to its status inside the meshlet, i.e whether it's already been added or not
     // if it has been added, it contains the local vertex index
 	std::vector<uint8_t> meshletVertices(vertices.size(), 0xff);
 	for (size_t i = 0; i < indices.size(); i += 3) {
-		unsigned int a = indices[i + 0];
-		unsigned int b = indices[i + 1];
-		unsigned int c = indices[i + 2];
+        // these are pointers to global array of vertices
+		unsigned int globalIndex0 = indices[i + 0];
+		unsigned int globalIndex1 = indices[i + 1];
+		unsigned int globalIndex2 = indices[i + 2];
 
-		uint8_t& av = meshletVertices[a];
-		uint8_t& bv = meshletVertices[b];
-		uint8_t& cv = meshletVertices[c];
+        // these are pointers to local array of vertex indices
+		uint8_t& localIndex0 = meshletVertices[globalIndex0];
+		uint8_t& localIndex1 = meshletVertices[globalIndex1];
+		uint8_t& localIndex2 = meshletVertices[globalIndex2];
 
-		if (meshlet.vertexCount + (av == 0xff) + (bv == 0xff) + (cv == 0xff) > 64 || meshlet.triangleCount >= 124) {
-            buildMeshletCon(meshlet);
+        int newVerticesCount = (localIndex0 == 0xff) + (localIndex1 == 0xff) + (localIndex2 == 0xff);
+		if (currentVertices.size() + newVerticesCount > 64 || currentIndices.size()/3 >= 124) {
+            // configure the meshlet
+            meshlet.triangleCount = currentIndices.size()/3;
+            meshlet.vertexCount = currentVertices.size();
+            // pad the indices to fit into uint32_t array
+            while (currentIndices.size()%4!=0) {
+                currentIndices.push_back(0);
+            } 
+            meshletData.insert(meshletData.end(), currentVertices.begin(), currentVertices.end());
+            uint32_t* packedCurrentIndices = reinterpret_cast<uint32_t*>(currentIndices.data());
+            for (size_t j=0; j<currentIndices.size()/4; j++) {
+                meshletData.push_back(packedCurrentIndices[j]);
+            }
+            buildMeshletCon(meshlet, currentVertices, currentIndices);
             meshlets.push_back(meshlet);
-			for (int j = 0; j < meshlet.vertexCount; j++)
-				meshletVertices[meshlet.vertices[j]] = 0xff;
+            // reset for the next meshlet
+			for (size_t j = 0; j < currentVertices.size(); j++) {
+				meshletVertices[currentVertices[j]] = 0xff;
+            }
+            currentVertices.clear();
+            currentIndices.clear();
 			meshlet = {};
+            meshlet.dataOffset = meshletData.size();
 		}
-        // if av == 0xff, it means the vertex is not in the meshlet and we need to add it
-		if (av == 0xff) {
-			av = meshlet.vertexCount;
-			meshlet.vertices[meshlet.vertexCount++] = a;
+        // if av == 0xff, it means the vertex is not in the meshlet array and we need to add it
+		if (localIndex0 == 0xff) {
+			localIndex0 = currentVertices.size();
+            currentVertices.push_back(globalIndex0);
 		}
-		if (bv == 0xff) {
-			bv = meshlet.vertexCount;
-			meshlet.vertices[meshlet.vertexCount++] = b;
+		if (localIndex1 == 0xff) {
+            localIndex1 = currentVertices.size();
+            currentVertices.push_back(globalIndex1);
 		}
-		if (cv == 0xff) {
-			cv = meshlet.vertexCount;
-			meshlet.vertices[meshlet.vertexCount++] = c;
+		if (localIndex2 == 0xff) {
+            localIndex2 = currentVertices.size();
+            currentVertices.push_back(globalIndex2);
 		}
-
-		meshlet.indices[meshlet.triangleCount * 3 + 0] = av;
-		meshlet.indices[meshlet.triangleCount * 3 + 1] = bv;
-		meshlet.indices[meshlet.triangleCount * 3 + 2] = cv;
-        meshlet.triangleCount++;
+        currentIndices.push_back(localIndex0);
+        currentIndices.push_back(localIndex1);
+        currentIndices.push_back(localIndex2);
 	}
     // the last meshlet may not have hit any limit on vertices or triangles
-	if (meshlet.triangleCount) {
-		meshlets.push_back(meshlet);
+	if (currentIndices.size()!=0) {
+		meshlet.triangleCount = currentIndices.size()/3;
+        meshlet.vertexCount = currentVertices.size();
+        while (currentIndices.size()%4!=0) {
+            currentIndices.push_back(0);
+        } 
+        meshletData.insert(meshletData.end(), currentVertices.begin(), currentVertices.end());
+        uint32_t* packedCurrentIndices = reinterpret_cast<uint32_t*>(currentIndices.data());
+        for (size_t j=0; j<currentIndices.size()/4; j++) {
+            meshletData.push_back(packedCurrentIndices[j]);
+        }
+        buildMeshletCon(meshlet, currentVertices, currentIndices);
+        meshlets.push_back(meshlet);
     }
 }
 void Engine::createInstance() {
@@ -758,7 +797,7 @@ void Engine::createDescriptorPool() {
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[2].descriptorCount = MAX_FRAMES_IN_FLIGHT*2;
+    poolSizes[2].descriptorCount = MAX_FRAMES_IN_FLIGHT*3;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -781,7 +820,7 @@ void Engine::createDescriptorSets() {
 
     // bind the actual data to descriptor sets
     for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
-        std::vector<DescriptorData> data(4);
+        std::vector<DescriptorData> data(5);
         // uniform buffer
         data[0].bufferInfo.buffer = uniformBuffers[i];
         data[0].bufferInfo.offset = 0;
@@ -798,6 +837,10 @@ void Engine::createDescriptorSets() {
         data[3].bufferInfo.buffer = meshletBuffer;
         data[3].bufferInfo.offset = 0;
         data[3].bufferInfo.range = sizeof(meshlets[0])*meshlets.size();
+        // meshlet data buffer
+        data[4].bufferInfo.buffer = meshletDataBuffer;
+        data[4].bufferInfo.offset = 0;
+        data[4].bufferInfo.range = sizeof(meshletData[0])*meshletData.size();
 
         // vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
         vkUpdateDescriptorSetWithTemplate(device, descriptorSets[i], descriptorUpdateTemplate, data.data());
@@ -1156,6 +1199,28 @@ void Engine::createIndexBuffer() {
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     copyBuffer(stagingBuffer, indexBuffer, indexBufferSize);
+
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
+}
+void Engine::createMeshletDataBuffer() {
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    VkDeviceSize meshletDataBufferSize = sizeof(meshletData[0])*meshletData.size();
+    createBuffer(stagingBuffer, stagingBufferMemory, meshletDataBufferSize, 
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+
+    void* data;
+    vkMapMemory(device, stagingBufferMemory, 0, meshletDataBufferSize, 0, &data);
+    memcpy(data, meshletData.data(), sizeof(meshletData[0])*meshletData.size());
+    vkUnmapMemory(device, stagingBufferMemory);
+
+    createBuffer(meshletDataBuffer, meshletDataBufferMemory, meshletDataBufferSize,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT| VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    copyBuffer(stagingBuffer, meshletDataBuffer, meshletDataBufferSize);
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingBufferMemory, nullptr);

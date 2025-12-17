@@ -30,6 +30,10 @@ layout(set = 0, binding = 3) readonly buffer Meshlets {
     Meshlet meshlets[];
 };
 
+layout(set = 0, binding = 4) readonly buffer MeshletData {
+    uint meshletData[];
+};
+
 // this block is passed from the task shader and is shared between 31 other mesh workgroups
 // each mesh workgroup picks its meshlet index based on its workgroup ID
 // this meshlet index leads to a global buffer of meshlets, so the range of values here
@@ -59,7 +63,7 @@ void main() {
     
     // each thread must process a vertex
     for (uint i = tid; i < meshlets[meshletID].vertexCount; i+=32) {
-        uint32_t globalVertexID = meshlets[meshletID].vertices[i]; 
+        uint32_t globalVertexID = meshletData[meshlets[meshletID].dataOffset+i]; 
 
         // vertices array for a meshlet
         gl_MeshVerticesNV[i].gl_Position = mvp.proj * mvp.view * mvp.model * 
@@ -84,7 +88,7 @@ void main() {
     for (uint i = tid; i < packedIndexCount; i+=32) {
         // offset is the offset within gl_PrimitiveIndicesNW
         // these indices are local, they refer to gl_MeshVerticesNV, not the global vertex buffer
-        writePackedPrimitiveIndices4x8NV(i*4, meshlets[meshletID].indices[i]);
+        writePackedPrimitiveIndices4x8NV(i*4, meshletData[meshlets[meshletID].dataOffset+meshlets[meshletID].vertexCount+i]);
     }
 
     if (tid==0) {

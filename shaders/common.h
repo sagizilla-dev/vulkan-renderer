@@ -15,11 +15,10 @@ struct Vertex {
 struct Meshlet {
     vec4 cone;              // offset 0,   alignment 16
     vec4 coneApex;          // offset 16,  alignment 16
-    uint32_t vertices[64];  // offset 32,  alignment 4
-    uint indices[124*3/4];  // offset 288, alignment 4
-    uint8_t triangleCount;  // offset 660, alignment 1
-    uint8_t vertexCount;    // offset 661, alignment 1
-    uint8_t padding[10];    // offset 662, alignment 1
+    uint32_t dataOffset;    // offset 32,  alignment 4
+    uint8_t triangleCount;  // offset 36,  alignment 1
+    uint8_t vertexCount;    // offset 37,  alignment 1
+    uint8_t padding[10];    // offset 38,  alignment 1
 };
 // largest alignment is 16
 

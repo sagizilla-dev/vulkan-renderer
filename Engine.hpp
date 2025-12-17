@@ -76,10 +76,12 @@ struct Meshlet {
     // cone apex is the average of all vertices within the meshlet, it is needed to
     // calculate the view vector
     float coneApex[4]; // vec3 is padded to vec4 anyways
-    uint32_t vertices[64];
-    uint8_t indices[124*3];
+    // this is offset into global meshletData buffer, where meshletData[dataOffset : dataOffset + vertexCount]
+    // points to the array of global vertex indices, and meshletData[dataOffset + vertexCount : dataOffset + vertexCount + triangleCount*3] 
+    // points to an array of local vertex indices, i.e they point to the first part of meshletData
+    uint32_t dataOffset;
     uint8_t triangleCount;
-    uint8_t vertexCount;
+    uint8_t vertexCount; // number of unique vertices
     uint8_t padding[10]; // padding
 };
 
@@ -158,6 +160,8 @@ private:
     VkDeviceMemory vertexBufferMemory;
     VkBuffer meshletBuffer;
     VkDeviceMemory meshletBufferMemory;
+    VkBuffer meshletDataBuffer;
+    VkDeviceMemory meshletDataBufferMemory;
     VkBuffer indexBuffer;
     VkDeviceMemory indexBufferMemory;
     VkCommandPool graphicsCmdPool;
@@ -178,6 +182,7 @@ private:
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     std::vector<Meshlet> meshlets;
+    std::vector<uint32_t> meshletData;
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
     std::vector<VkQueryPool> queryPools;
 
@@ -185,7 +190,8 @@ private:
     void loadModel();
     float computeVertexScore(int cachePosition, int valence);
     void optimizeGeometry();
-    void buildMeshletCon(Meshlet& meshlet);
+    void buildMeshletCon(Meshlet& meshlet, std::vector<uint32_t> globalIndices, std::vector<uint8_t> localIndices);
+    void createMeshletDataBuffer();
     void createMeshlets();
     void createInstance();
     void createSurface();
