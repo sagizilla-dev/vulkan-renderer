@@ -116,11 +116,11 @@ void Engine::run() {
                 float gpuTimeMs = (delta * timestampPeriod) / 1000000.0f;
                 gpuTimes.push_back(gpuTimeMs);
                 // output stats every 200 frames
-                if (gpuTimes.size()==1000) {
+                if (gpuTimes.size()==200) {
                     char title[256];
                     float avgGpuTime = 0.0f;
-                    for (int i=0; i<1000; i++) {
-                        avgGpuTime+=gpuTimes[i]/1000;
+                    for (int i=0; i<200; i++) {
+                        avgGpuTime+=gpuTimes[i]/200;
                     }
                     double trianglesPerSec = (indices.size()/3) / (avgGpuTime*1e-3);
                     snprintf(title, sizeof(title), "GPU Time: %.3f ms, %i meshlets, %i vertices, %i triangles, %.2fB tri/sec", 
@@ -1520,7 +1520,7 @@ VkSurfaceFormatKHR Engine::chooseSurfaceFormat(const std::vector<VkSurfaceFormat
     return formats[0];
 }
 VkPresentModeKHR Engine::choosePresentMode(const std::vector<VkPresentModeKHR>& presentModes) {
-    // return VK_PRESENT_MODE_IMMEDIATE_KHR;
+    return VK_PRESENT_MODE_IMMEDIATE_KHR;
     for (const auto& mode: presentModes) {
         if (mode==VK_PRESENT_MODE_MAILBOX_KHR) {
             return mode;
