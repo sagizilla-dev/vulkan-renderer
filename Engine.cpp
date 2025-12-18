@@ -116,11 +116,11 @@ void Engine::run() {
                 float gpuTimeMs = (delta * timestampPeriod) / 1000000.0f;
                 gpuTimes.push_back(gpuTimeMs);
                 // output stats every 200 frames
-                if (gpuTimes.size()==200) {
+                if (gpuTimes.size()==1000) {
                     char title[256];
                     float avgGpuTime = 0.0f;
-                    for (int i=0; i<200; i++) {
-                        avgGpuTime+=gpuTimes[i]/200;
+                    for (int i=0; i<1000; i++) {
+                        avgGpuTime+=gpuTimes[i]/1000;
                     }
                     double trianglesPerSec = (indices.size()/3) / (avgGpuTime*1e-3);
                     snprintf(title, sizeof(title), "GPU Time: %.3f ms, %i meshlets, %i vertices, %i triangles, %.2fB tri/sec", 
@@ -770,6 +770,7 @@ void Engine::createDescriptorUpdateTemplate() {
     
     std::vector<VkDescriptorUpdateTemplateEntry> entries(descriptorResourceInfos.size());
     int i = 0;
+    // here the descriptor resource infos come in binding order, i.e binding = 0 comes first
     for (auto& descriptorResourceInfo: descriptorResourceInfos) {
         entries[i].descriptorCount = 1; // in case the descriptor is an array
         entries[i].descriptorType = descriptorResourceInfo.type;
@@ -793,7 +794,13 @@ void Engine::createDescriptorPool() {
     std::vector<VkDescriptorPoolSize> poolSizes(3);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     // number of descriptors of a specific type
+    // we set it to MAX_FRAMES_IN_FLIGHT since we have one uniform buffer per frame
+    // meaning we need to bind a different descriptor set (that contains a different uniform buffer)
+    // every frame
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    // same logic is applicable to other uniforms, although we don't have multiple images
+    // perhaps it would be cleaner to split those into two descriptor sets per frame, i.e
+    // one with uniform buffer, and another with static data i.e meshlet data
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -808,6 +815,7 @@ void Engine::createDescriptorPool() {
     VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
 }
 void Engine::createDescriptorSets() {
+    // we need to supply a layout for every descriptor set to be created
     std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
     descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
     VkDescriptorSetAllocateInfo allocInfo{};
@@ -1277,6 +1285,9 @@ void Engine::createUniformBuffers() {
     uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
     uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
     uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+    // we have multiple uniform buffers since we don't want to update the buffer in preparation of the next
+    // frame while a previous one is still reading from it.
+    // perhaps we can do it with one buffer if we used a staging buffer instead of persistent mapping
     for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
         createBuffer(uniformBuffers[i], uniformBuffersMemory[i], size, 
             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
@@ -1509,7 +1520,7 @@ VkSurfaceFormatKHR Engine::chooseSurfaceFormat(const std::vector<VkSurfaceFormat
     return formats[0];
 }
 VkPresentModeKHR Engine::choosePresentMode(const std::vector<VkPresentModeKHR>& presentModes) {
-    return VK_PRESENT_MODE_IMMEDIATE_KHR;
+    // return VK_PRESENT_MODE_IMMEDIATE_KHR;
     for (const auto& mode: presentModes) {
         if (mode==VK_PRESENT_MODE_MAILBOX_KHR) {
             return mode;
