@@ -4,6 +4,12 @@ struct Vertex {
     float16_t tu, tv;
 };
 
+struct MVP {
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+};
+
 // double indexing is important here
 // having 126*3 uint32_t indices makes up for 126*3*4 = 1512 bytes
 // having 126*3 uint8_t sub indices and 64 uint32_t global indices make up for 126*3 + 64*4 = 634 bytes

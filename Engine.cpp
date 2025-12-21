@@ -25,7 +25,6 @@ Engine::Engine() {
     createColorBuffer();
     createRenderpass();
     createFramebuffers();
-    createUniformBuffers();
     createTextureImage();
     createTextureSampler();
     createVertexBuffer();
@@ -51,8 +50,6 @@ Engine::~Engine() {
     vkDestroyImage(device, textureImage, nullptr);
     vkFreeMemory(device, textureImageMemory, nullptr);
     for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
-        vkDestroyBuffer(device, uniformBuffers[i], nullptr);
-        vkFreeMemory(device, uniformBuffersMemory[i], nullptr);
         vkDestroyQueryPool(device, queryPools[i], nullptr);
     }
     vkDestroyBuffer(device, indexBuffer, nullptr);
@@ -151,7 +148,7 @@ void Engine::run() {
         vkResetFences(device, 1, &cmdBufferReady[currentFrame]);
 
         vkResetCommandBuffer(cmdBuffer[currentFrame], 0);
-        updateMVP();
+        
         recordCmdBuffer(cmdBuffer[currentFrame], imageIndex);
 
         VkSubmitInfo submitInfo{};
@@ -791,70 +788,59 @@ void Engine::createDescriptorUpdateTemplate() {
     VK_CHECK(vkCreateDescriptorUpdateTemplate(device, &info, nullptr, &descriptorUpdateTemplate));
 }
 void Engine::createDescriptorPool() {
-    std::vector<VkDescriptorPoolSize> poolSizes(3);
-    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    std::vector<VkDescriptorPoolSize> poolSizes(2);
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     // number of descriptors of a specific type
-    // we set it to MAX_FRAMES_IN_FLIGHT since we have one uniform buffer per frame
-    // meaning we need to bind a different descriptor set (that contains a different uniform buffer)
-    // every frame
-    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
-    // same logic is applicable to other uniforms, although we don't have multiple images
-    // perhaps it would be cleaner to split those into two descriptor sets per frame, i.e
-    // one with uniform buffer, and another with static data i.e meshlet data
-    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
-    poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[2].descriptorCount = MAX_FRAMES_IN_FLIGHT*3;
+    poolSizes[0].descriptorCount = 1;
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    // Meshlets, meshlet's data (vertices and indices) and vertices
+    poolSizes[1].descriptorCount = 1*3;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = poolSizes.size();
     poolInfo.pPoolSizes = poolSizes.data();
     // total number of descriptor sets that are to be allocated
-    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+    poolInfo.maxSets = 1;
     VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
 }
 void Engine::createDescriptorSets() {
     // we need to supply a layout for every descriptor set to be created
-    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
-    descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    std::vector<VkDescriptorSetLayout> layouts(1, descriptorSetLayout);
+    descriptorSets.resize(1);
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.pSetLayouts = layouts.data();
-    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocInfo.descriptorSetCount = 1;
     allocInfo.descriptorPool = descriptorPool;
     // allocate descriptor sets, each created based on the descriptor set layout
     VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()));
 
     // bind the actual data to descriptor sets
-    for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
-        std::vector<DescriptorData> data(5);
-        // uniform buffer
-        data[0].bufferInfo.buffer = uniformBuffers[i];
-        data[0].bufferInfo.offset = 0;
-        data[0].bufferInfo.range = sizeof(MVP);
+    for (size_t i=0; i<descriptorSets.size(); i++) {
+        std::vector<DescriptorData> data(4);
         // image and sampler
-        data[1].imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        data[1].imageInfo.imageView = textureImageView;
-        data[1].imageInfo.sampler = textureSampler;
+        data[0].imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        data[0].imageInfo.imageView = textureImageView;
+        data[0].imageInfo.sampler = textureSampler;
         // vertex buffer
-        data[2].bufferInfo.buffer = vertexBuffer;
-        data[2].bufferInfo.offset = 0;
-        data[2].bufferInfo.range = sizeof(vertices[0])*vertices.size();
+        data[1].bufferInfo.buffer = vertexBuffer;
+        data[1].bufferInfo.offset = 0;
+        data[1].bufferInfo.range = sizeof(vertices[0])*vertices.size();
         // meshlet buffer
-        data[3].bufferInfo.buffer = meshletBuffer;
-        data[3].bufferInfo.offset = 0;
-        data[3].bufferInfo.range = sizeof(meshlets[0])*meshlets.size();
+        data[2].bufferInfo.buffer = meshletBuffer;
+        data[2].bufferInfo.offset = 0;
+        data[2].bufferInfo.range = sizeof(meshlets[0])*meshlets.size();
         // meshlet data buffer
-        data[4].bufferInfo.buffer = meshletDataBuffer;
-        data[4].bufferInfo.offset = 0;
-        data[4].bufferInfo.range = sizeof(meshletData[0])*meshletData.size();
+        data[3].bufferInfo.buffer = meshletDataBuffer;
+        data[3].bufferInfo.offset = 0;
+        data[3].bufferInfo.range = sizeof(meshletData[0])*meshletData.size();
 
         // vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
         vkUpdateDescriptorSetWithTemplate(device, descriptorSets[i], descriptorUpdateTemplate, data.data());
     }
 }
-void Engine::createGraphicsPipeline() {    
+void Engine::createGraphicsPipeline() {
     std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(5);
     for (size_t i=0; i<shaderStageInfos.size(); i++) {
         shaderStageInfos[i].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -940,8 +926,17 @@ void Engine::createGraphicsPipeline() {
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
-    pipelineLayoutInfo.pushConstantRangeCount = 0;
-    pipelineLayoutInfo.pPushConstantRanges = nullptr;
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = 0;
+    for (const auto& shader: shaders) {
+        if (shader.hasPushConstants) {
+            pushConstantRange.stageFlags |= shader.stage;
+        }
+    }
+    pushConstantRange.size = sizeof(MVP);
+    pushConstantRange.offset = 0;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
     VK_CHECK(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout));
 
     VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -981,6 +976,7 @@ void Engine::createShader(Shader& shader, std::string path) {
     memcpy(byteCode.data(), bytes.data(), bytes.size());
     shader.code = byteCode;
     shader.codeSize = bytes.size();
+    shader.hasPushConstants = false;
 
     // parse SPIR-V to extract information about descriptor sets and what stage the shader belongs to
     parseSPIRV(shader);
@@ -1279,21 +1275,6 @@ VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties) {
     
     // now buffer on the GPU holds the memory
     vkBindBufferMemory(device, buffer, bufferMemory, 0);
-}
-void Engine::createUniformBuffers() {
-    VkDeviceSize size = sizeof(MVP);
-    uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
-    uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
-    uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
-    // we have multiple uniform buffers since we don't want to update the buffer in preparation of the next
-    // frame while a previous one is still reading from it.
-    // perhaps we can do it with one buffer if we used a staging buffer instead of persistent mapping
-    for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
-        createBuffer(uniformBuffers[i], uniformBuffersMemory[i], size, 
-            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        // persistent mapping
-        vkMapMemory(device, uniformBuffersMemory[i], 0, size, 0, &uniformBuffersMapped[i]);
-    }
 }
 void Engine::createTextureImage() {
     int texWidth, texHeight, texChannels;
@@ -1818,6 +1799,8 @@ void Engine::parseSPIRV(Shader& shader) {
                         descriptorTypes[resultId] = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
                     } else if (storageClass == SpvStorageClassUniformConstant) {
                         descriptorTypes[resultId] = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                    } else if (storageClass == SpvStorageClassPushConstant) {
+                        shader.hasPushConstants = true;
                     }
                 }
                 break;
@@ -1874,20 +1857,24 @@ void Engine::parseSPIRV(Shader& shader) {
         instr += wordCount;
     }
 }
-void Engine::updateMVP() {
+MVP Engine::createMVP(glm::vec3 translation, glm::vec3 rotation, glm::vec3 scale) {
     static auto startTime = std::chrono::high_resolution_clock::now();
     auto currentTime = std::chrono::high_resolution_clock::now();
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 
     MVP mvp{};
-    mvp.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    mvp.model = glm::translate(glm::mat4(1.0f), translation);
+    mvp.model *= glm::rotate(glm::mat4(1.0f), rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
+    mvp.model *= glm::rotate(glm::mat4(1.0f), rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
+    mvp.model *= glm::rotate(glm::mat4(1.0f), rotation.z + time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     // this is applied only to put models in a correct vertical position
     mvp.model *= glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-    mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    mvp.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 0.1f, 10.0f);
+    mvp.model *= glm::scale(glm::mat4(1.0f), scale);
+    mvp.view = glm::lookAt(glm::vec3(5.0f, 5.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    mvp.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 0.1f, 20.0f);
     mvp.proj[1][1] *= -1;
 
-    memcpy(uniformBuffersMapped[currentFrame], &mvp, sizeof(MVP));
+    return mvp;
 }
 
 void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
@@ -1926,8 +1913,10 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
                 vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
             }
 
-            // first set is the set number of the first descriptor set to be bound from the provided descriptorSets array
-            vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+            // vkCmdBindDescriptorSets binds descriptor sets [0...descriptorSetCount-1] to set
+            // numbers firstSet...firstSet+descriptorSetCount-1
+            // first set is the set number of the first descriptor set to be bound in the provided descriptorSets array
+            vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[0], 0, nullptr);
 
             if (!meshShadersEnabled) {
                 vkCmdBindIndexBuffer(cmdBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
@@ -1953,11 +1942,28 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             // if the number of meshlets was 31, we'd still need to launch 1 task shader
             // if the number of meshlets was 33, we'd need to launch 2 task shaders
             uint32_t taskWorkgroups = (meshlets.size() + 31) / 32;
-            if (meshShadersEnabled) {
-                vkCmdDrawMeshTasksNV(cmdBuffer, taskWorkgroups, 0);
-                // vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);
-            } else {
-                vkCmdDrawIndexed(cmdBuffer, indices.size(), 1, 0, 0, 0);
+            VkShaderStageFlags pushConstantStages = 0;
+            for (const auto& shader: shaders) {
+                if (shader.hasPushConstants) {
+                    pushConstantStages |= shader.stage;
+                }
+            }
+            int drawCount = 100;
+            for (int i=0; i<drawCount; i++) {
+                // place each object in a grid 10x10, with spacing of [0...9] - 5.0f + 0.5f = [-4.5f...4.5f]
+                // with spacing scaling of 0.5f 
+                float offsetX = (float(i%10) - 10/2.0f + 0.5f)*0.5f;
+                float offsetY = (float(i/10) - 10/2.0f + 0.5f)*0.5f;
+                float scale = 0.5f;
+                MVP mvp = createMVP(glm::vec3(offsetX, offsetY, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(scale));
+
+                vkCmdPushConstants(cmdBuffer, pipelineLayout, pushConstantStages, 0, sizeof(MVP), &mvp);
+                if (meshShadersEnabled) {
+                    vkCmdDrawMeshTasksNV(cmdBuffer, taskWorkgroups, 0);
+                    // vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);
+                } else {
+                    vkCmdDrawIndexed(cmdBuffer, indices.size(), 1, 0, 0, 0);
+                }
             }
         }
         vkCmdEndRenderPass(cmdBuffer);

@@ -5,11 +5,9 @@
 
 #include "common.h"
 
-layout(set = 0, binding = 0) uniform MVP {
-    mat4 model;
-    mat4 view;
-    mat4 proj;
-} mvp;
+layout(push_constant) uniform block {
+    MVP mvp;
+};
 
 layout (set = 0, binding = 2) readonly buffer Vertices {
     Vertex vertices[];

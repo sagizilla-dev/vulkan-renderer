@@ -113,6 +113,7 @@ struct Shader {
     VkShaderStageFlagBits stage;
     std::vector<uint32_t> code; // vector of words (1 word = uint32_t = 4 bytes)
     uint32_t codeSize; // size in bytes
+    bool hasPushConstants; // indicates whether the shader stage contains push constants
 };
 
 // this struct is only used to provide actual data for descriptor update template
@@ -166,9 +167,6 @@ private:
     VkDeviceMemory indexBufferMemory;
     VkCommandPool graphicsCmdPool;
     VkCommandPool transferCmdPool;
-    std::vector<VkBuffer> uniformBuffers;
-    std::vector<VkDeviceMemory> uniformBuffersMemory;
-    std::vector<void*> uniformBuffersMapped;
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
     VkImageView textureImageView;
@@ -268,7 +266,7 @@ private:
     VkCommandBuffer beginRecording(VkCommandPool& cmdPool);
     void stopRecording(VkCommandBuffer& cmdBuffer, VkCommandPool& cmdPool);
     void parseSPIRV(Shader& shader);
-    void updateMVP();
+    MVP createMVP(glm::vec3 translation, glm::vec3 rotation, glm::vec3 scale);
 
     void recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex);
     void transitionImageLayout(VkImage image, VkFormat format, uint32_t mipLevels, VkImageLayout oldLayout, VkImageLayout newLayout);
