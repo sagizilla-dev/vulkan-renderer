@@ -116,12 +116,14 @@ void Engine::run() {
                 if (gpuTimes.size()==200) {
                     char title[256];
                     float avgGpuTime = 0.0f;
+                    float avgCpuTime = 0.0f;
                     for (int i=0; i<200; i++) {
                         avgGpuTime+=gpuTimes[i]/200;
+                        avgCpuTime+=cpuTimes[i]/200;
                     }
                     double trianglesPerSec = (indices.size()/3) / (avgGpuTime*1e-3);
-                    snprintf(title, sizeof(title), "GPU Time: %.3f ms, %i meshlets, %i vertices, %i triangles, %.2fB tri/sec", 
-                            avgGpuTime, int(meshlets.size()), int(vertices.size()), int(indices.size())/3, 
+                    snprintf(title, sizeof(title), "GPU Time: %.3f ms, CPU Time: %.3f ms, %i meshlets, %i triangles, %.2fB tri/sec", 
+                            avgGpuTime, avgCpuTime, int(meshlets.size()), int(indices.size())/3, 
                             trianglesPerSec*1e-9);
                     glfwSetWindowTitle(window, title);
                     gpuTimes.clear();
@@ -146,7 +148,8 @@ void Engine::run() {
         // it is important to avoid deadlock, otherwise if swapchain is 
         // recreated, fence is reset but we are still waiting on it
         vkResetFences(device, 1, &cmdBufferReady[currentFrame]);
-
+        
+        auto cpuStart = std::chrono::high_resolution_clock::now();
         vkResetCommandBuffer(cmdBuffer[currentFrame], 0);
         
         recordCmdBuffer(cmdBuffer[currentFrame], imageIndex);
@@ -165,6 +168,10 @@ void Engine::run() {
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = &renderDone[currentFrame];
         VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submitInfo, cmdBufferReady[currentFrame]));
+
+        auto cpuEnd = std::chrono::high_resolution_clock::now();
+        float cpuTimeMs = std::chrono::duration<float, std::milli>(cpuEnd - cpuStart).count();
+        cpuTimes.push_back(cpuTimeMs);
 
         VkPresentInfoKHR presentInfo{};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
