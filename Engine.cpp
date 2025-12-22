@@ -904,7 +904,8 @@ void Engine::createGraphicsPipeline() {
     depthStencilInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencilInfo.depthTestEnable = VK_TRUE; // enable depth testing
     depthStencilInfo.depthWriteEnable = VK_TRUE; // enable writing to the depth buffer
-    depthStencilInfo.depthCompareOp = VK_COMPARE_OP_LESS; // lower depth = closer
+    // lower depth = closer, but for reverse-z it's the opposite, so we use great-or-equal
+    depthStencilInfo.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
     depthStencilInfo.depthBoundsTestEnable = VK_FALSE; // if set to VK_TRUE then we can only keep fragments that fall within specific depth range
     depthStencilInfo.minDepthBounds = 0.0f;
     depthStencilInfo.maxDepthBounds = 1.0f;
@@ -1871,7 +1872,7 @@ MVP Engine::createMVP(glm::vec3 translation, glm::vec3 rotation, glm::vec3 scale
     mvp.model *= glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
     mvp.model *= glm::scale(glm::mat4(1.0f), scale);
     mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    mvp.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 0.1f, 20.0f);
+    mvp.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 10000.0f, 0.1f);
     mvp.proj[1][1] *= -1;
 
     return mvp;
@@ -1900,7 +1901,9 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
         renderpassBeginInfo.renderArea.offset = {0, 0};
         std::array<VkClearValue, 2> clearValues{};
         clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-        clearValues[1].depthStencil = {1.0f, 0}; // in Vulkan 1.0 indicates the far view plane, and 0.0 indicates the near view plane
+        // in Vulkan 1.0 indicates the far view plane, and 0.0 indicates the near view plane
+        // but since we are using reverse-z, those values are 0.0f and 1.0f respectively
+        clearValues[1].depthStencil = {0.0f, 0};
         renderpassBeginInfo.clearValueCount = clearValues.size();
         renderpassBeginInfo.pClearValues = clearValues.data();
         // VK_SUBPASS_CONTENTS_INLINE means the render pass commands will be embedded in the primary buffer command itself
