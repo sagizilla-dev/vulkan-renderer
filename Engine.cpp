@@ -1859,19 +1859,15 @@ void Engine::parseSPIRV(Shader& shader) {
     }
 }
 MVP Engine::createMVP(glm::vec3 translation, glm::vec3 rotation, glm::vec3 scale) {
-    static auto startTime = std::chrono::high_resolution_clock::now();
-    auto currentTime = std::chrono::high_resolution_clock::now();
-    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-
     MVP mvp{};
     mvp.model = glm::translate(glm::mat4(1.0f), translation);
     mvp.model *= glm::rotate(glm::mat4(1.0f), rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
     mvp.model *= glm::rotate(glm::mat4(1.0f), rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
-    mvp.model *= glm::rotate(glm::mat4(1.0f), rotation.z + time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    mvp.model *= glm::rotate(glm::mat4(1.0f), rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
     // this is applied only to put models in a correct vertical position
     mvp.model *= glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
     mvp.model *= glm::scale(glm::mat4(1.0f), scale);
-    mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    mvp.view = glm::lookAt(glm::vec3(7.0f, 7.0f, 7.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     mvp.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 10000.0f, 0.1f);
     mvp.proj[1][1] *= -1;
 
@@ -1951,13 +1947,20 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
                     pushConstantStages |= shader.stage;
                 }
             }
-            int drawCount = 100;
+            int drawCount = 1000;
             srand(42);
+            static auto startTime = std::chrono::high_resolution_clock::now();
+            auto currentTime = std::chrono::high_resolution_clock::now();
+            float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
             for (int i=0; i<drawCount; i++) {
-                float offsetX = (float(rand())/RAND_MAX)*40.0f-20.0f;
-                float offsetY = (float(rand())/RAND_MAX)*40.0f-20.0f;
+                float offsetX = (float(rand())/RAND_MAX)*20.0f-10.0f;
+                float offsetY = (float(rand())/RAND_MAX)*20.0f-10.0f;
+                float offsetZ = (float(rand())/RAND_MAX)*20.0f-10.0f;
                 float scale = 1.0f;
-                MVP mvp = createMVP(glm::vec3(offsetX, offsetY, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(scale));
+                float rotateX = (float(rand())/RAND_MAX) * time * glm::radians(90.0f);
+                float rotateY = (float(rand())/RAND_MAX) * time * glm::radians(45.0f);
+                float rotateZ = (float(rand())/RAND_MAX) * time * glm::radians(30.0f);
+                MVP mvp = createMVP(glm::vec3(offsetX, offsetY, offsetZ), glm::vec3(rotateX, rotateY, rotateZ), glm::vec3(scale));
 
                 vkCmdPushConstants(cmdBuffer, pipelineLayout, pushConstantStages, 0, sizeof(MVP), &mvp);
                 if (meshShadersEnabled) {
