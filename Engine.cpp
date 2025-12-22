@@ -1870,7 +1870,7 @@ MVP Engine::createMVP(glm::vec3 translation, glm::vec3 rotation, glm::vec3 scale
     // this is applied only to put models in a correct vertical position
     mvp.model *= glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
     mvp.model *= glm::scale(glm::mat4(1.0f), scale);
-    mvp.view = glm::lookAt(glm::vec3(1.0f, 1.0f, 1.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    mvp.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     mvp.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 0.1f, 20.0f);
     mvp.proj[1][1] *= -1;
 
@@ -1948,16 +1948,13 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
                     pushConstantStages |= shader.stage;
                 }
             }
-            int drawCount = 3000;
+            int drawCount = 100;
             srand(42);
             for (int i=0; i<drawCount; i++) {
-                // place each object in a grid 10x10, with spacing of [0...9] - 5.0f + 0.5f = [-4.5f...4.5f]
-                // with spacing scaling of 0.5f 
                 float offsetX = (float(rand())/RAND_MAX)*40.0f-20.0f;
                 float offsetY = (float(rand())/RAND_MAX)*40.0f-20.0f;
-                float scale = 0.5f;
-                MVP mvp = createMVP(glm::vec3(offsetX, offsetY, 0.0f), glm::vec3((float(rand())/RAND_MAX)*90.0f, 
-                (float(rand())/RAND_MAX)*90.0f, 0.0f), glm::vec3(scale));
+                float scale = 1.0f;
+                MVP mvp = createMVP(glm::vec3(offsetX, offsetY, 0.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(scale));
 
                 vkCmdPushConstants(cmdBuffer, pipelineLayout, pushConstantStages, 0, sizeof(MVP), &mvp);
                 if (meshShadersEnabled) {
