@@ -9,7 +9,7 @@ layout(push_constant) uniform block {
     MVP mvp;
 };
 
-layout (set = 0, binding = 2) readonly buffer Vertices {
+layout (set = 0, binding = 1) readonly buffer Vertices {
     Vertex vertices[];
 };
 
