@@ -43,21 +43,23 @@ void main() {
     uint tid = gl_LocalInvocationID.x; // meshlet index within the batch
     uint meshletID = localMeshletID*32 + tid; // global meshlet ID
     Transform transform = transforms[gl_DrawIDARB];
+    bool accept = false;
+    if (meshletID < globals.meshletCount) {
+        // if we inverse the view matrix, we can get the camera position in the world space
+        // by accessing the last row
+        mat4 invView = inverse(globals.view);
+        vec3 cameraPos = vec3(invView[3][0], invView[3][1], invView[3][2]);
+        // cone apex must be translated into world coordinates
+        vec3 coneApex = vec3(transform.model * vec4(meshlets[meshletID].coneApex.xyz, 1.0));
+        // cone axis must be translated into world coordinates as well
+        // although we need to ignore translation this time since axis is a vector
+        // which has no position
+        vec3 coneAxis = normalize(mat3(transform.model) * meshlets[meshletID].cone.xyz);
+        // get the cone spread as -sin(A)
+        float coneW = meshlets[meshletID].cone.w;
 
-    // if we inverse the view matrix, we can get the camera position in the world space
-    // by accessing the last row
-    mat4 invView = inverse(globals.view);
-    vec3 cameraPos = vec3(invView[3][0], invView[3][1], invView[3][2]);
-    // cone apex must be translated into world coordinates
-    vec3 coneApex = vec3(transform.model * vec4(meshlets[meshletID].coneApex.xyz, 1.0));
-    // cone axis must be translated into world coordinates as well
-    // although we need to ignore translation this time since axis is a vector
-    // which has no position
-    vec3 coneAxis = normalize(mat3(transform.model) * meshlets[meshletID].cone.xyz);
-    // get the cone spread as -sin(A)
-    float coneW = meshlets[meshletID].cone.w;
-
-    bool accept = !coneCull(coneAxis, coneW, cameraPos, coneApex);
+        accept = !coneCull(coneAxis, coneW, cameraPos, coneApex);
+    }
     // ballot is a bitmask where each bit represents one thread's boolean value
     // this function creates the bitmask based on the variable provided
 	uvec4 ballot = subgroupBallot(accept);

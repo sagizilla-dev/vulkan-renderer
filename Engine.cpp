@@ -130,7 +130,7 @@ void Engine::run() {
                     double trianglesPerSec = (indices.size()/3) / (avgGpuTime*1e-3);
                     snprintf(title, sizeof(title), "GPU Time: %.3f ms, CPU Time: %.3f ms, %i meshlets, %i triangles, %.2fB tri/sec", 
                             avgGpuTime, avgCpuTime, int(meshlets.size()), int(indices.size())/3, 
-                            trianglesPerSec*1e-9);
+                            DRAW_COUNT * trianglesPerSec*1e-9);
                     glfwSetWindowTitle(window, title);
                     gpuTimes.clear();
                 }
@@ -1934,12 +1934,13 @@ void Engine::parseSPIRV(Shader& shader) {
     }
 }
 Globals Engine::createGlobals() {
-    Globals mvp{};
-    mvp.view = glm::lookAt(cameraPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    mvp.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 10000.0f, 0.1f);
-    mvp.proj[1][1] *= -1;
+    Globals globals{};
+    globals.view = glm::lookAt(cameraPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    globals.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 10000.0f, 0.1f);
+    globals.proj[1][1] *= -1;
+    globals.meshletCount = meshlets.size();
 
-    return mvp;
+    return globals;
 }
 void Engine::updateTransforms(int index) {
     // this stores transformations for each instance
