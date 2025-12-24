@@ -14,7 +14,7 @@ layout(push_constant) uniform block {
     MVP mvp;
 };
 
-layout(set = 0, binding = 3) readonly buffer Meshlets {
+layout(set = 0, binding = 2) readonly buffer Meshlets {
     Meshlet meshlets[];
 };
 
