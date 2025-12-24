@@ -94,6 +94,12 @@ struct Transform {
     glm::mat4 model;
 };
 
+// this struct is only used for multi draw indirect
+struct DrawIndirect {
+    VkDrawIndexedIndirectCommand commandIndirect;
+    VkDrawMeshTasksIndirectCommandNV commandMeshIndirect;
+};
+
 // this struct holds data extracted from the SPIR-V
 struct DescriptorResourceInfo {
     uint32_t set; // which set the descriptor belongs to
@@ -168,6 +174,8 @@ private:
     VkDeviceMemory meshletDataBufferMemory;
     VkBuffer indexBuffer;
     VkDeviceMemory indexBufferMemory;
+    VkBuffer indirectBuffer;
+    VkDeviceMemory indirectBufferMemory;
     VkCommandPool graphicsCmdPool;
     VkCommandPool transferCmdPool;
     VkImage textureImage;
@@ -224,6 +232,7 @@ private:
     void createIndexBuffer();
     void createMeshletBuffer();
     void createTransformBuffers();
+    void createIndirectBuffer();
     void createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
     void createTextureImage();
     void createImage(VkImage& image, VkDeviceMemory& imageMemory, VkSampleCountFlagBits samples, int width, int height, uint32_t mipLevels,
@@ -236,11 +245,11 @@ private:
 
     const glm::vec3 cameraPos{2.0f, 2.0f, 2.0f};
     const int MAX_FRAMES_IN_FLIGHT = 4;
-    const int DRAW_COUNT = 1000;
+    const int DRAW_COUNT = 100;
     uint32_t currentFrame = 0;
     std::vector<float> gpuTimes;
     std::vector<float> cpuTimes;
-    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/kitten.obj";
+    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/buddha.obj";
     const std::string TEXTURE_PATH = std::string(PROJECT_ROOT) + "/textures/viking_room.png";
     const std::string VERT_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv";
     const std::string MESH_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv";

@@ -4,6 +4,7 @@
 #extension GL_EXT_shader_8bit_storage: require
 // this extension allows the use of 8-bit integer types for arithmetic operations
 #extension GL_EXT_shader_explicit_arithmetic_types: require
+#extension GL_ARB_shader_draw_parameters: require
 
 #include "common.h"
 
@@ -19,8 +20,8 @@ layout(push_constant) uniform block {
     Globals globals;
 };
 
-layout(set = 0, binding = 4) uniform Transforms {
-    Transform transform;
+layout(set = 0, binding = 4) readonly buffer Transforms {
+    Transform transforms[];
 };
 
 layout(set = 0, binding = 1) readonly buffer Vertices {
@@ -41,6 +42,7 @@ layout(set = 0, binding = 3) readonly buffer MeshletData {
 // is [0, meshletCount)
 in taskNV block {
     uint meshletIndices[32];
+    uint drawID;
 };
 
 layout(location = 0) out vec3 Normal[];
@@ -61,6 +63,7 @@ void main() {
     // meanwhile when the second task shader dispatches another 32 mesh workgroups, the range is also [0, 31]
     uint meshletID = meshletIndices[gl_WorkGroupID.x];
     uint tid = gl_LocalInvocationID.x;
+    Transform transform = transforms[drawID];
     
     // each thread must process a vertex
     for (uint i = tid; i < meshlets[meshletID].vertexCount; i+=32) {

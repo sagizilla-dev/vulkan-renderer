@@ -5,6 +5,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types: require
 // subgroup is essentially a warp
 #extension GL_KHR_shader_subgroup_ballot: require
+#extension GL_ARB_shader_draw_parameters: require
 
 #include "common.h"
 
@@ -14,8 +15,8 @@ layout(push_constant) uniform block {
     Globals globals;
 };
 
-layout(set = 0, binding = 4) uniform Transforms {
-    Transform transform;
+layout(set = 0, binding = 4) readonly buffer Transforms {
+    Transform transforms[];
 };
 
 layout(set = 0, binding = 2) readonly buffer Meshlets {
@@ -23,9 +24,12 @@ layout(set = 0, binding = 2) readonly buffer Meshlets {
 };
 
 out taskNV block {
-    uint meshletIndices[32]; // those are indices of meshlets that are not culled
-    // note that this array must be filled with values in a contiguous order, i.e there must be
-    // no gaps of garbage data
+    // those are indices of meshlets that are not culled
+    // note that this array must be filled with values in a contiguous order, i.e there must be no gaps of garbage data
+    uint meshletIndices[32];
+    // so for some reason validation layers do not allow mesh shaders to use gl_DrawID if task shader is bound, so we
+    // just pass drawID directly from the task shader
+    uint drawID;
 };
 
 bool coneCull(vec3 coneAxis, float coneW, vec3 cameraPos, vec3 coneApex) {
@@ -38,6 +42,7 @@ void main() {
     uint localMeshletID = gl_WorkGroupID.x; // meshlets batch index
     uint tid = gl_LocalInvocationID.x; // meshlet index within the batch
     uint meshletID = localMeshletID*32 + tid; // global meshlet ID
+    Transform transform = transforms[gl_DrawIDARB];
 
     // if we inverse the view matrix, we can get the camera position in the world space
     // by accessing the last row
@@ -66,6 +71,7 @@ void main() {
     // now we just count the total number of 1 bits in the ballot
     uint count = subgroupBallotBitCount(ballot);
     if (tid==0) {
+        drawID = gl_DrawIDARB;
         gl_TaskCountNV = count; // this defines how many mesh shaders/workgroups to dispatch from this task shader
     }
 }

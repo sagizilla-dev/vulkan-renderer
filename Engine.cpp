@@ -32,6 +32,7 @@ Engine::Engine() {
     createMeshletDataBuffer();
     createMeshletBuffer();
     createTransformBuffers();
+    createIndirectBuffer();
     createShaders();
     createDescriptorSetLayout();
     createDescriptorUpdateTemplate();
@@ -51,8 +52,12 @@ Engine::~Engine() {
     vkDestroyImage(device, textureImage, nullptr);
     vkFreeMemory(device, textureImageMemory, nullptr);
     for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroyBuffer(device, transformBuffers[i], nullptr);
+        vkFreeMemory(device, transformBuffersMemory[i], nullptr);
         vkDestroyQueryPool(device, queryPools[i], nullptr);
     }
+    vkDestroyBuffer(device, indirectBuffer, nullptr);
+    vkFreeMemory(device, indirectBufferMemory, nullptr);
     vkDestroyBuffer(device, indexBuffer, nullptr);
     vkFreeMemory(device, indexBufferMemory, nullptr);
     vkDestroyBuffer(device, vertexBuffer, nullptr);
@@ -629,6 +634,7 @@ void Engine::createDevice() {
     features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     features.features.geometryShader = VK_TRUE;
     features.features.samplerAnisotropy = VK_TRUE;
+    features.features.multiDrawIndirect = VK_TRUE;
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.storageBuffer8BitAccess = VK_TRUE;
@@ -644,6 +650,7 @@ void Engine::createDevice() {
     VkPhysicalDeviceVulkan11Features features11{};
     features11.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
     features11.storageBuffer16BitAccess = VK_TRUE;
+    features11.shaderDrawParameters = VK_TRUE;
     maintenanceFeatures.pNext = &features11;
     meshFeatures.pNext = &maintenanceFeatures;
     features12.pNext = &meshFeatures;
@@ -797,15 +804,15 @@ void Engine::createDescriptorUpdateTemplate() {
     VK_CHECK(vkCreateDescriptorUpdateTemplate(device, &info, nullptr, &descriptorUpdateTemplate));
 }
 void Engine::createDescriptorPool() {
-    std::vector<VkDescriptorPoolSize> poolSizes(3);
+    // so the transform buffer is now a storage buffer instead of a uniform
+    // since we cannot make a dynamic array inside a uniform block
+    std::vector<VkDescriptorPoolSize> poolSizes(2);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     // number of descriptors of a specific type
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    // Meshlets, meshlet's data (vertices and indices) and vertices
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT*3;
-    poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[2].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    // Meshlets, meshlet's data (vertices and indices) and vertices, and transformations
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT*4;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -849,7 +856,7 @@ void Engine::createDescriptorSets() {
         // transform data buffer
         data[4].bufferInfo.buffer = transformBuffers[i];
         data[4].bufferInfo.offset = 0;
-        data[4].bufferInfo.range = sizeof(Transform);
+        data[4].bufferInfo.range = sizeof(Transform)*DRAW_COUNT;
 
         // vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
         vkUpdateDescriptorSetWithTemplate(device, descriptorSets[i], descriptorUpdateTemplate, data.data());
@@ -1271,13 +1278,54 @@ void Engine::createTransformBuffers() {
     transformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
     transformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
     transformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
-    VkDeviceSize transformBuffersSize = sizeof(Transform);
+    VkDeviceSize transformBuffersSize = sizeof(Transform)*DRAW_COUNT;
     for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
-        createBuffer(transformBuffers[i], transformBuffersMemory[i], transformBuffersSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+        createBuffer(transformBuffers[i], transformBuffersMemory[i], transformBuffersSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, 
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         // persistent mapping
         vkMapMemory(device, transformBuffersMemory[i], 0, transformBuffersSize, 0, &transformBuffersMapped[i]);
     }
+}
+void Engine::createIndirectBuffer() {
+    // this stores the indirect buffer information for both vertex pipeline and mesh pipeline
+    std::vector<DrawIndirect> drawsIndirect(DRAW_COUNT);
+    // the number of task workgroups to dispatch per instance
+    // task workgroup consists of 32 threads
+    // each thread must work on its own meshlet, and each workgroup's main thread dispatches
+    // mesh shaders (the number of dispatches depends on how many meshlets were culled)
+    // if the number of meshlets was 31, we'd still need to launch 1 task shader
+    // if the number of meshlets was 33, we'd need to launch 2 task shaders
+    uint32_t taskWorkgroups = (meshlets.size() + 31) / 32;
+    for (int i=0; i<DRAW_COUNT; i++) {
+        drawsIndirect[i].commandIndirect.indexCount = indices.size();
+        drawsIndirect[i].commandIndirect.instanceCount = 1;
+        drawsIndirect[i].commandIndirect.vertexOffset = 0;
+        drawsIndirect[i].commandIndirect.firstInstance = 0;
+        drawsIndirect[i].commandIndirect.firstIndex = 0;
+        drawsIndirect[i].commandMeshIndirect.firstTask = 0;
+        drawsIndirect[i].commandMeshIndirect.taskCount = taskWorkgroups;
+    }
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    VkDeviceSize indirectBufferSize = DRAW_COUNT * sizeof(DrawIndirect);
+    createBuffer(stagingBuffer, stagingBufferMemory, indirectBufferSize, 
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+
+    void* data;
+    vkMapMemory(device, stagingBufferMemory, 0, indirectBufferSize, 0, &data);
+    memcpy(data, drawsIndirect.data(), sizeof(drawsIndirect[0])*drawsIndirect.size());
+    vkUnmapMemory(device, stagingBufferMemory);
+
+    createBuffer(indirectBuffer, indirectBufferMemory, indirectBufferSize, 
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    copyBuffer(stagingBuffer, indirectBuffer, indirectBufferSize);
+
+    vkDestroyBuffer(device, stagingBuffer, nullptr);
+    vkFreeMemory(device, stagingBufferMemory, nullptr);
 }
 void Engine::createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, 
 VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties) {
@@ -1894,27 +1942,31 @@ Globals Engine::createGlobals() {
     return mvp;
 }
 void Engine::updateTransforms(int index) {
-    Transform transform;
+    // this stores transformations for each instance
+    std::vector<Transform> transforms(DRAW_COUNT);
     srand(42);
     static auto startTime = std::chrono::high_resolution_clock::now();
     auto currentTime = std::chrono::high_resolution_clock::now();
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-    float offsetX = (float(rand())/RAND_MAX)*20.0f-10.0f;
-    float offsetY = (float(rand())/RAND_MAX)*20.0f-10.0f;
-    float offsetZ = (float(rand())/RAND_MAX)*20.0f-10.0f;
-    float scale = 1.0f;
-    float rotateX = (float(rand())/RAND_MAX) * time * glm::radians(90.0f);
-    float rotateY = (float(rand())/RAND_MAX) * time * glm::radians(45.0f);
-    float rotateZ = (float(rand())/RAND_MAX) * time * glm::radians(30.0f);
-    transform.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f));
-    transform.model *= glm::rotate(glm::mat4(1.0f), rotateX, glm::vec3(1.0f, 0.0f, 0.0f));
-    transform.model *= glm::rotate(glm::mat4(1.0f), rotateY, glm::vec3(0.0f, 1.0f, 0.0f));
-    transform.model *= glm::rotate(glm::mat4(1.0f), rotateZ, glm::vec3(0.0f, 0.0f, 1.0f));
-    // this is applied only to put models in a correct vertical position
-    transform.model *= glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-    transform.model *= glm::scale(glm::mat4(1.0f), glm::vec3(scale));
-
-    memcpy(transformBuffersMapped[index], &transform, sizeof(Transform));
+    for (int i=0; i<DRAW_COUNT; i++) {
+        Transform transform;
+        float offsetX = (float(rand())/RAND_MAX)*20.0f-10.0f;
+        float offsetY = (float(rand())/RAND_MAX)*20.0f-10.0f;
+        float offsetZ = (float(rand())/RAND_MAX)*20.0f-10.0f;
+        float scale = 1.0f;
+        float rotateX = (float(rand())/RAND_MAX) * time * glm::radians(90.0f);
+        float rotateY = (float(rand())/RAND_MAX) * time * glm::radians(45.0f);
+        float rotateZ = (float(rand())/RAND_MAX) * time * glm::radians(30.0f);
+        transform.model = glm::translate(glm::mat4(1.0f), glm::vec3(offsetX, offsetY, offsetZ));
+        transform.model *= glm::rotate(glm::mat4(1.0f), rotateX, glm::vec3(1.0f, 0.0f, 0.0f));
+        transform.model *= glm::rotate(glm::mat4(1.0f), rotateY, glm::vec3(0.0f, 1.0f, 0.0f));
+        transform.model *= glm::rotate(glm::mat4(1.0f), rotateZ, glm::vec3(0.0f, 0.0f, 1.0f));
+        // this is applied only to put models in a correct vertical position
+        transform.model *= glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+        transform.model *= glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+        transforms[i] = transform;
+    }
+    memcpy(transformBuffersMapped[index], transforms.data(), sizeof(Transform)*DRAW_COUNT);
 }
 
 void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
@@ -1957,8 +2009,10 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
 
             // vkCmdBindDescriptorSets binds descriptor sets [0...descriptorSetCount-1] to set
             // numbers firstSet...firstSet+descriptorSetCount-1
-            // first set is the set number of the first descriptor set to be bound in the provided descriptorSets array
-            vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[0], 0, nullptr);
+            // firstSet is the set number of the first descriptor set to be bound in the provided descriptorSets array
+            // we bind a different descriptor set every frame to avoid changing transformations buffer when
+            // the previous frame is not done reading from it
+            vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
 
             if (!meshShadersEnabled) {
                 vkCmdBindIndexBuffer(cmdBuffer, indexBuffer, 0, VK_INDEX_TYPE_UINT32);
@@ -1977,13 +2031,11 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             scissor.offset = {0, 0};
             vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
 
-            PFN_vkCmdDrawMeshTasksNV vkCmdDrawMeshTasksNV = (PFN_vkCmdDrawMeshTasksNV)vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksNV");
-            // task workgroup consists of 32 threads
-            // each thread must work on its own meshlet, and each workgroup's main thread dispatches
-            // mesh shaders (the number of dispatches depends on how many meshlets were culled)
-            // if the number of meshlets was 31, we'd still need to launch 1 task shader
-            // if the number of meshlets was 33, we'd need to launch 2 task shaders
-            uint32_t taskWorkgroups = (meshlets.size() + 31) / 32;
+            // PFN_vkCmdDrawMeshTasksNV vkCmdDrawMeshTasksNV = 
+            //     (PFN_vkCmdDrawMeshTasksNV)vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksNV");
+            PFN_vkCmdDrawMeshTasksIndirectNV vkCmdDrawMeshTasksIndirectNV = 
+                (PFN_vkCmdDrawMeshTasksIndirectNV)vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksIndirectNV");
+
             VkShaderStageFlags pushConstantStages = 0;
             for (const auto& shader: shaders) {
                 if (shader.hasPushConstants) {
@@ -1991,16 +2043,16 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
                 }
             }
             
-            for (int i=0; i<DRAW_COUNT; i++) {
-                Globals globals = createGlobals();
-
-                vkCmdPushConstants(cmdBuffer, pipelineLayout, pushConstantStages, 0, sizeof(Globals), &globals);
-                if (meshShadersEnabled) {
-                    vkCmdDrawMeshTasksNV(cmdBuffer, taskWorkgroups, 0);
-                    // vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);
-                } else {
-                    vkCmdDrawIndexed(cmdBuffer, indices.size(), 1, 0, 0, 0);
-                }
+            Globals globals = createGlobals();
+            vkCmdPushConstants(cmdBuffer, pipelineLayout, pushConstantStages, 0, sizeof(Globals), &globals);
+            
+            if (meshShadersEnabled) {
+                vkCmdDrawMeshTasksIndirectNV(cmdBuffer, indirectBuffer, offsetof(DrawIndirect, commandMeshIndirect), DRAW_COUNT, sizeof(DrawIndirect));
+                // vkCmdDrawMeshTasksNV(cmdBuffer, taskWorkgroups, 0);
+                // vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);
+            } else {
+                vkCmdDrawIndexedIndirect(cmdBuffer, indirectBuffer, offsetof(DrawIndirect, commandIndirect), DRAW_COUNT, sizeof(DrawIndirect));
+                // vkCmdDrawIndexed(cmdBuffer, indices.size(), 1, 0, 0, 0);
             }
         }
         vkCmdEndRenderPass(cmdBuffer);
