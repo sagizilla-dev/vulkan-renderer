@@ -85,10 +85,13 @@ struct Meshlet {
     uint8_t padding[10]; // padding
 };
 
-struct MVP {
-    glm::mat4 model;
+struct Globals {
     glm::mat4 view;
     glm::mat4 proj;
+};
+
+struct Transform {
+    glm::mat4 model;
 };
 
 // this struct holds data extracted from the SPIR-V
@@ -183,6 +186,9 @@ private:
     std::vector<uint32_t> meshletData;
     VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT;
     std::vector<VkQueryPool> queryPools;
+    std::vector<VkBuffer> transformBuffers;
+    std::vector<VkDeviceMemory> transformBuffersMemory;
+    std::vector<void*> transformBuffersMapped;
 
     void createWindow();
     void loadModel();
@@ -217,8 +223,8 @@ private:
     void createVertexBuffer();
     void createIndexBuffer();
     void createMeshletBuffer();
+    void createTransformBuffers();
     void createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
-    void createUniformBuffers();
     void createTextureImage();
     void createImage(VkImage& image, VkDeviceMemory& imageMemory, VkSampleCountFlagBits samples, int width, int height, uint32_t mipLevels,
         VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
@@ -228,7 +234,9 @@ private:
     void createQueryPools();
     VkFormat findDepthFormat();
 
+    const glm::vec3 cameraPos{2.0f, 2.0f, 2.0f};
     const int MAX_FRAMES_IN_FLIGHT = 4;
+    const int DRAW_COUNT = 1000;
     uint32_t currentFrame = 0;
     std::vector<float> gpuTimes;
     std::vector<float> cpuTimes;
@@ -267,7 +275,8 @@ private:
     VkCommandBuffer beginRecording(VkCommandPool& cmdPool);
     void stopRecording(VkCommandBuffer& cmdBuffer, VkCommandPool& cmdPool);
     void parseSPIRV(Shader& shader);
-    MVP createMVP(glm::vec3 translation, glm::vec3 rotation, glm::vec3 scale);
+    Globals createGlobals();
+    void updateTransforms(int index);
 
     void recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex);
     void transitionImageLayout(VkImage image, VkFormat format, uint32_t mipLevels, VkImageLayout oldLayout, VkImageLayout newLayout);

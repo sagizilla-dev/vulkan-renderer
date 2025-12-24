@@ -4,10 +4,13 @@ struct Vertex {
     float16_t tu, tv;
 };
 
-struct MVP {
-    mat4 model;
+struct Globals {
     mat4 view;
     mat4 proj;
+};
+
+struct Transform {
+    mat4 model;
 };
 
 // double indexing is important here

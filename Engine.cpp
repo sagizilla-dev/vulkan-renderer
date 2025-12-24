@@ -31,6 +31,7 @@ Engine::Engine() {
     createIndexBuffer();
     createMeshletDataBuffer();
     createMeshletBuffer();
+    createTransformBuffers();
     createShaders();
     createDescriptorSetLayout();
     createDescriptorUpdateTemplate();
@@ -152,6 +153,7 @@ void Engine::run() {
         auto cpuStart = std::chrono::high_resolution_clock::now();
         vkResetCommandBuffer(cmdBuffer[currentFrame], 0);
         
+        updateTransforms(currentFrame);
         recordCmdBuffer(cmdBuffer[currentFrame], imageIndex);
 
         VkSubmitInfo submitInfo{};
@@ -795,37 +797,39 @@ void Engine::createDescriptorUpdateTemplate() {
     VK_CHECK(vkCreateDescriptorUpdateTemplate(device, &info, nullptr, &descriptorUpdateTemplate));
 }
 void Engine::createDescriptorPool() {
-    std::vector<VkDescriptorPoolSize> poolSizes(2);
+    std::vector<VkDescriptorPoolSize> poolSizes(3);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     // number of descriptors of a specific type
-    poolSizes[0].descriptorCount = 1;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     // Meshlets, meshlet's data (vertices and indices) and vertices
-    poolSizes[1].descriptorCount = 1*3;
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT*3;
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[2].descriptorCount = MAX_FRAMES_IN_FLIGHT;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = poolSizes.size();
     poolInfo.pPoolSizes = poolSizes.data();
     // total number of descriptor sets that are to be allocated
-    poolInfo.maxSets = 1;
+    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
     VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
 }
 void Engine::createDescriptorSets() {
     // we need to supply a layout for every descriptor set to be created
-    std::vector<VkDescriptorSetLayout> layouts(1, descriptorSetLayout);
-    descriptorSets.resize(1);
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
+    descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
     VkDescriptorSetAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     allocInfo.pSetLayouts = layouts.data();
-    allocInfo.descriptorSetCount = 1;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
     allocInfo.descriptorPool = descriptorPool;
     // allocate descriptor sets, each created based on the descriptor set layout
     VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, descriptorSets.data()));
 
     // bind the actual data to descriptor sets
     for (size_t i=0; i<descriptorSets.size(); i++) {
-        std::vector<DescriptorData> data(4);
+        std::vector<DescriptorData> data(5);
         // image and sampler
         data[0].imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         data[0].imageInfo.imageView = textureImageView;
@@ -842,6 +846,10 @@ void Engine::createDescriptorSets() {
         data[3].bufferInfo.buffer = meshletDataBuffer;
         data[3].bufferInfo.offset = 0;
         data[3].bufferInfo.range = sizeof(meshletData[0])*meshletData.size();
+        // transform data buffer
+        data[4].bufferInfo.buffer = transformBuffers[i];
+        data[4].bufferInfo.offset = 0;
+        data[4].bufferInfo.range = sizeof(Transform);
 
         // vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
         vkUpdateDescriptorSetWithTemplate(device, descriptorSets[i], descriptorUpdateTemplate, data.data());
@@ -941,7 +949,7 @@ void Engine::createGraphicsPipeline() {
             pushConstantRange.stageFlags |= shader.stage;
         }
     }
-    pushConstantRange.size = sizeof(MVP);
+    pushConstantRange.size = sizeof(Globals);
     pushConstantRange.offset = 0;
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
@@ -1258,6 +1266,18 @@ void Engine::createMeshletBuffer() {
 
     vkDestroyBuffer(device, stagingBuffer, nullptr);
     vkFreeMemory(device, stagingBufferMemory, nullptr);
+}
+void Engine::createTransformBuffers() {
+    transformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    transformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    transformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
+    VkDeviceSize transformBuffersSize = sizeof(Transform);
+    for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
+        createBuffer(transformBuffers[i], transformBuffersMemory[i], transformBuffersSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        // persistent mapping
+        vkMapMemory(device, transformBuffersMemory[i], 0, transformBuffersSize, 0, &transformBuffersMapped[i]);
+    }
 }
 void Engine::createBuffer(VkBuffer& buffer, VkDeviceMemory& bufferMemory, VkDeviceSize size, 
 VkBufferUsageFlags usage, VkMemoryPropertyFlags memoryProperties) {
@@ -1865,20 +1885,36 @@ void Engine::parseSPIRV(Shader& shader) {
         instr += wordCount;
     }
 }
-MVP Engine::createMVP(glm::vec3 translation, glm::vec3 rotation, glm::vec3 scale) {
-    MVP mvp{};
-    mvp.model = glm::translate(glm::mat4(1.0f), translation);
-    mvp.model *= glm::rotate(glm::mat4(1.0f), rotation.x, glm::vec3(1.0f, 0.0f, 0.0f));
-    mvp.model *= glm::rotate(glm::mat4(1.0f), rotation.y, glm::vec3(0.0f, 1.0f, 0.0f));
-    mvp.model *= glm::rotate(glm::mat4(1.0f), rotation.z, glm::vec3(0.0f, 0.0f, 1.0f));
-    // this is applied only to put models in a correct vertical position
-    mvp.model *= glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
-    mvp.model *= glm::scale(glm::mat4(1.0f), scale);
-    mvp.view = glm::lookAt(glm::vec3(7.0f, 7.0f, 7.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+Globals Engine::createGlobals() {
+    Globals mvp{};
+    mvp.view = glm::lookAt(cameraPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     mvp.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 10000.0f, 0.1f);
     mvp.proj[1][1] *= -1;
 
     return mvp;
+}
+void Engine::updateTransforms(int index) {
+    Transform transform;
+    srand(42);
+    static auto startTime = std::chrono::high_resolution_clock::now();
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+    float offsetX = (float(rand())/RAND_MAX)*20.0f-10.0f;
+    float offsetY = (float(rand())/RAND_MAX)*20.0f-10.0f;
+    float offsetZ = (float(rand())/RAND_MAX)*20.0f-10.0f;
+    float scale = 1.0f;
+    float rotateX = (float(rand())/RAND_MAX) * time * glm::radians(90.0f);
+    float rotateY = (float(rand())/RAND_MAX) * time * glm::radians(45.0f);
+    float rotateZ = (float(rand())/RAND_MAX) * time * glm::radians(30.0f);
+    transform.model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f));
+    transform.model *= glm::rotate(glm::mat4(1.0f), rotateX, glm::vec3(1.0f, 0.0f, 0.0f));
+    transform.model *= glm::rotate(glm::mat4(1.0f), rotateY, glm::vec3(0.0f, 1.0f, 0.0f));
+    transform.model *= glm::rotate(glm::mat4(1.0f), rotateZ, glm::vec3(0.0f, 0.0f, 1.0f));
+    // this is applied only to put models in a correct vertical position
+    transform.model *= glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+    transform.model *= glm::scale(glm::mat4(1.0f), glm::vec3(scale));
+
+    memcpy(transformBuffersMapped[index], &transform, sizeof(Transform));
 }
 
 void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
@@ -1954,22 +1990,11 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
                     pushConstantStages |= shader.stage;
                 }
             }
-            int drawCount = 1000;
-            srand(42);
-            static auto startTime = std::chrono::high_resolution_clock::now();
-            auto currentTime = std::chrono::high_resolution_clock::now();
-            float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-            for (int i=0; i<drawCount; i++) {
-                float offsetX = (float(rand())/RAND_MAX)*20.0f-10.0f;
-                float offsetY = (float(rand())/RAND_MAX)*20.0f-10.0f;
-                float offsetZ = (float(rand())/RAND_MAX)*20.0f-10.0f;
-                float scale = 1.0f;
-                float rotateX = (float(rand())/RAND_MAX) * time * glm::radians(90.0f);
-                float rotateY = (float(rand())/RAND_MAX) * time * glm::radians(45.0f);
-                float rotateZ = (float(rand())/RAND_MAX) * time * glm::radians(30.0f);
-                MVP mvp = createMVP(glm::vec3(offsetX, offsetY, offsetZ), glm::vec3(rotateX, rotateY, rotateZ), glm::vec3(scale));
+            
+            for (int i=0; i<DRAW_COUNT; i++) {
+                Globals globals = createGlobals();
 
-                vkCmdPushConstants(cmdBuffer, pipelineLayout, pushConstantStages, 0, sizeof(MVP), &mvp);
+                vkCmdPushConstants(cmdBuffer, pipelineLayout, pushConstantStages, 0, sizeof(Globals), &globals);
                 if (meshShadersEnabled) {
                     vkCmdDrawMeshTasksNV(cmdBuffer, taskWorkgroups, 0);
                     // vkCmdDrawMeshTasksNV(cmdBuffer, uint32_t(meshlets.size()), 0);

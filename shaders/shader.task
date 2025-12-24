@@ -11,7 +11,11 @@
 layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform block {
-    MVP mvp;
+    Globals globals;
+};
+
+layout(set = 0, binding = 4) uniform Transforms {
+    Transform transform;
 };
 
 layout(set = 0, binding = 2) readonly buffer Meshlets {
@@ -37,14 +41,14 @@ void main() {
 
     // if we inverse the view matrix, we can get the camera position in the world space
     // by accessing the last row
-    mat4 invView = inverse(mvp.view);
+    mat4 invView = inverse(globals.view);
     vec3 cameraPos = vec3(invView[3][0], invView[3][1], invView[3][2]);
     // cone apex must be translated into world coordinates
-    vec3 coneApex = vec3(mvp.model * vec4(meshlets[meshletID].coneApex.xyz, 1.0));
+    vec3 coneApex = vec3(transform.model * vec4(meshlets[meshletID].coneApex.xyz, 1.0));
     // cone axis must be translated into world coordinates as well
     // although we need to ignore translation this time since axis is a vector
     // which has no position
-    vec3 coneAxis = normalize(mat3(mvp.model) * meshlets[meshletID].cone.xyz);
+    vec3 coneAxis = normalize(mat3(transform.model) * meshlets[meshletID].cone.xyz);
     // get the cone spread as -sin(A)
     float coneW = meshlets[meshletID].cone.w;
 

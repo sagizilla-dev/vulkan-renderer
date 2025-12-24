@@ -6,7 +6,11 @@
 #include "common.h"
 
 layout(push_constant) uniform block {
-    MVP mvp;
+    Globals globals;
+};
+
+layout(set = 0, binding = 4) uniform Transforms {
+    Transform transform;
 };
 
 layout (set = 0, binding = 1) readonly buffer Vertices {
@@ -17,7 +21,7 @@ layout(location = 0) out vec3 Normal;
 layout(location = 1) out vec2 TexCoords;
 
 void main() {
-    gl_Position = mvp.proj * mvp.view * mvp.model * vec4(vertices[gl_VertexIndex].vx, vertices[gl_VertexIndex].vy, vertices[gl_VertexIndex].vz, 1.0);
+    gl_Position = globals.proj * globals.view * transform.model * vec4(vertices[gl_VertexIndex].vx, vertices[gl_VertexIndex].vy, vertices[gl_VertexIndex].vz, 1.0);
     // decompress normals
     vec3 decompressed = vec3(vertices[gl_VertexIndex].nx, vertices[gl_VertexIndex].ny, vertices[gl_VertexIndex].nz) / 255.0 * 2.0 - 1.0;
     Normal = decompressed;
