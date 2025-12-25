@@ -38,6 +38,21 @@ bool coneCull(vec3 coneAxis, float coneW, vec3 cameraPos, vec3 coneApex) {
     return dot(coneAxis, viewDirection) < -coneW;
 }
 
+bool frustumCull(vec3 coneApex, float radius) {
+    for (int i=0; i<6; i++) {
+        // plane equation is Nx*Px + Ny*Py + Nz*Pz = d for a point P
+        // so if a point satisfies the equation Nx*Px + Ny*Py + Nz*Pz - d = 0.0, it means it is on the plane
+        // if it is < 0.0, it is behind the plane
+        // if it is > 0.0, it is in front of the plane, in normal's direction space
+        // even if the center is behind the plane, we need to account for the furthest point on the sphere, so
+        // we must add radius
+        if (dot(globals.frustum[i].xyz, coneApex) + globals.frustum[i].w + radius < 0.0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void main() {
     uint localMeshletID = gl_WorkGroupID.x; // meshlets batch index
     uint tid = gl_LocalInvocationID.x; // meshlet index within the batch
@@ -57,8 +72,10 @@ void main() {
         vec3 coneAxis = normalize(mat3(transform.model) * meshlets[meshletID].cone.xyz);
         // get the cone spread as -sin(A)
         float coneW = meshlets[meshletID].cone.w;
+        // radius must be scaled into world coordinates
+        float radius = meshlets[meshletID].radius * length(transform.model[0].xyz);
 
-        accept = !coneCull(coneAxis, coneW, cameraPos, coneApex);
+        accept = !coneCull(coneAxis, coneW, cameraPos, coneApex) && !frustumCull(coneApex, radius);
     }
     // ballot is a bitmask where each bit represents one thread's boolean value
     // this function creates the bitmask based on the variable provided

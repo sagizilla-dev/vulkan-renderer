@@ -505,6 +505,16 @@ void Engine::buildMeshletCon(Meshlet& meshlet, std::vector<uint32_t> globalIndic
         meshlet.coneApex[1]+=((vertices[globalIndices[i]].vy))/float(meshlet.vertexCount);
         meshlet.coneApex[2]+=((vertices[globalIndices[i]].vz))/float(meshlet.vertexCount);
     }
+
+    // calculate radius of the bounding sphere as a max distance to vertices from apex
+    float maxDistanceSqr = 0.0f;
+    for (int i=0; i<meshlet.vertexCount; i++) {
+        float dx = vertices[globalIndices[i]].vx - meshlet.coneApex[0];
+        float dy = vertices[globalIndices[i]].vy - meshlet.coneApex[1];
+        float dz = vertices[globalIndices[i]].vz - meshlet.coneApex[2];
+        maxDistanceSqr = std::max(maxDistanceSqr, dx*dx+dy*dy+dz*dz);
+    }
+    meshlet.radius = sqrtf(maxDistanceSqr);
 }
 void Engine::createMeshlets() {
     Meshlet meshlet{};
@@ -1939,6 +1949,20 @@ Globals Engine::createGlobals() {
     globals.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 10000.0f, 0.1f);
     globals.proj[1][1] *= -1;
     globals.meshletCount = meshlets.size();
+    glm::mat4 vp = globals.proj * globals.view;
+    // Gribb-Hartmann method to extract frustum planes from VP matrix 
+    globals.frustum[0] = glm::vec4(vp[0][3] + vp[0][0], vp[1][3] + vp[1][0], vp[2][3] + vp[2][0], vp[3][3] + vp[3][0]);
+    globals.frustum[1] = glm::vec4(vp[0][3] - vp[0][0], vp[1][3] - vp[1][0], vp[2][3] - vp[2][0], vp[3][3] - vp[3][0]);
+    globals.frustum[2] = glm::vec4(vp[0][3] + vp[0][1], vp[1][3] + vp[1][1], vp[2][3] + vp[2][1], vp[3][3] + vp[3][1]);
+    globals.frustum[3] = glm::vec4(vp[0][3] - vp[0][1], vp[1][3] - vp[1][1], vp[2][3] - vp[2][1], vp[3][3] - vp[3][1]);
+    globals.frustum[4] = glm::vec4(vp[0][3] + vp[0][2], vp[1][3] + vp[1][2], vp[2][3] + vp[2][2], vp[3][3] + vp[3][2]);
+    globals.frustum[5] = glm::vec4(vp[0][3] - vp[0][2], vp[1][3] - vp[1][2], vp[2][3] - vp[2][2], vp[3][3] - vp[3][2]);
+
+    // normalize normals
+    for (int i=0; i<6; i++) {
+        float len = glm::length(glm::vec3(globals.frustum[i]));
+        globals.frustum[i]/=len;
+    }
 
     return globals;
 }

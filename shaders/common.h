@@ -7,6 +7,7 @@ struct Vertex {
 struct Globals {
     mat4 view;
     mat4 proj;
+    vec4 frustum[6];
     uint meshletCount;
 };
 
@@ -25,10 +26,11 @@ struct Transform {
 struct Meshlet {
     vec4 cone;              // offset 0,   alignment 16
     vec4 coneApex;          // offset 16,  alignment 16
-    uint32_t dataOffset;    // offset 32,  alignment 4
-    uint8_t triangleCount;  // offset 36,  alignment 1
-    uint8_t vertexCount;    // offset 37,  alignment 1
-    uint8_t padding[10];    // offset 38,  alignment 1
+    float radius;           // offset 32,  alignment 4
+    uint32_t dataOffset;    // offset 36,  alignment 4
+    uint8_t triangleCount;  // offset 40,  alignment 1
+    uint8_t vertexCount;    // offset 41,  alignment 1
+    uint8_t padding[6];    // offset 42,  alignment 1
 };
 // largest alignment is 16
 

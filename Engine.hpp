@@ -79,15 +79,18 @@ struct Meshlet {
     // this is offset into global meshletData buffer, where meshletData[dataOffset : dataOffset + vertexCount]
     // points to the array of global vertex indices, and meshletData[dataOffset + vertexCount : dataOffset + vertexCount + triangleCount*3] 
     // points to an array of local vertex indices, i.e they point to the first part of meshletData
+    float radius;
     uint32_t dataOffset;
     uint8_t triangleCount;
     uint8_t vertexCount; // number of unique vertices
-    uint8_t padding[10]; // padding
+    uint8_t padding[6]; // padding
 };
 
 struct Globals {
     glm::mat4 view;
     glm::mat4 proj;
+    // a plane can be described as a normal and the distance the plane is located along this normal
+    glm::vec4 frustum[6];
     uint32_t meshletCount;
 };
 
@@ -246,11 +249,11 @@ private:
 
     const glm::vec3 cameraPos{2.0f, 2.0f, 2.0f};
     const int MAX_FRAMES_IN_FLIGHT = 4;
-    const int DRAW_COUNT = 3000;
+    const int DRAW_COUNT = 100;
     uint32_t currentFrame = 0;
     std::vector<float> gpuTimes;
     std::vector<float> cpuTimes;
-    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/kitten.obj";
+    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/buddha.obj";
     const std::string TEXTURE_PATH = std::string(PROJECT_ROOT) + "/textures/viking_room.png";
     const std::string VERT_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv";
     const std::string MESH_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv";
