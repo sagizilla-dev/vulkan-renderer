@@ -7,7 +7,7 @@ struct Vertex {
 struct Globals {
     mat4 view;
     mat4 proj;
-    vec4 frustum[6];
+    vec4 frustum[5];
     uint meshletCount;
 };
 

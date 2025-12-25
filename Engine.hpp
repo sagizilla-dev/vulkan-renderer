@@ -90,7 +90,7 @@ struct Globals {
     glm::mat4 view;
     glm::mat4 proj;
     // a plane can be described as a normal and the distance the plane is located along this normal
-    glm::vec4 frustum[6];
+    glm::vec4 frustum[5];
     uint32_t meshletCount;
 };
 
@@ -249,11 +249,11 @@ private:
 
     const glm::vec3 cameraPos{2.0f, 2.0f, 2.0f};
     const int MAX_FRAMES_IN_FLIGHT = 4;
-    const int DRAW_COUNT = 100;
+    const int DRAW_COUNT = 1000;
     uint32_t currentFrame = 0;
     std::vector<float> gpuTimes;
     std::vector<float> cpuTimes;
-    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/buddha.obj";
+    const std::string MODEL_PATH = std::string(PROJECT_ROOT) + "/assets/kitten.obj";
     const std::string TEXTURE_PATH = std::string(PROJECT_ROOT) + "/textures/viking_room.png";
     const std::string VERT_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.vert.spv";
     const std::string MESH_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv";

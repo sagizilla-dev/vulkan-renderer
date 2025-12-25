@@ -39,7 +39,7 @@ bool coneCull(vec3 coneAxis, float coneW, vec3 cameraPos, vec3 coneApex) {
 }
 
 bool frustumCull(vec3 coneApex, float radius) {
-    for (int i=0; i<6; i++) {
+    for (int i=0; i<5; i++) {
         // plane equation is Nx*Px + Ny*Py + Nz*Pz = d for a point P
         // so if a point satisfies the equation Nx*Px + Ny*Py + Nz*Pz - d = 0.0, it means it is on the plane
         // if it is < 0.0, it is behind the plane

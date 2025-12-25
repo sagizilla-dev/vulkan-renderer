@@ -1946,20 +1946,27 @@ void Engine::parseSPIRV(Shader& shader) {
 Globals Engine::createGlobals() {
     Globals globals{};
     globals.view = glm::lookAt(cameraPos, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    globals.proj = glm::perspective(glm::radians(45.0f), swapchainExtent.width / (float) swapchainExtent.height, 10000.0f, 0.1f);
-    globals.proj[1][1] *= -1;
+    // projection matrix with infinite far plane
+    glm::mat4 proj(0.0f);
+    float f = 1.0f / tan(glm::radians(45.0f) / 2.0f);
+    proj[0][0] = f / (swapchainExtent.width / (float) swapchainExtent.height);
+    proj[1][1] = f;
+    proj[2][2] = 0.0f;
+    proj[2][3] = -1.0f;
+    proj[3][2] = 0.1f;
+    globals.proj = proj;
+    globals.proj[1][1]*=-1;
     globals.meshletCount = meshlets.size();
     glm::mat4 vp = globals.proj * globals.view;
     // Gribb-Hartmann method to extract frustum planes from VP matrix 
-    globals.frustum[0] = glm::vec4(vp[0][3] + vp[0][0], vp[1][3] + vp[1][0], vp[2][3] + vp[2][0], vp[3][3] + vp[3][0]);
-    globals.frustum[1] = glm::vec4(vp[0][3] - vp[0][0], vp[1][3] - vp[1][0], vp[2][3] - vp[2][0], vp[3][3] - vp[3][0]);
-    globals.frustum[2] = glm::vec4(vp[0][3] + vp[0][1], vp[1][3] + vp[1][1], vp[2][3] + vp[2][1], vp[3][3] + vp[3][1]);
-    globals.frustum[3] = glm::vec4(vp[0][3] - vp[0][1], vp[1][3] - vp[1][1], vp[2][3] - vp[2][1], vp[3][3] - vp[3][1]);
-    globals.frustum[4] = glm::vec4(vp[0][3] + vp[0][2], vp[1][3] + vp[1][2], vp[2][3] + vp[2][2], vp[3][3] + vp[3][2]);
-    globals.frustum[5] = glm::vec4(vp[0][3] - vp[0][2], vp[1][3] - vp[1][2], vp[2][3] - vp[2][2], vp[3][3] - vp[3][2]);
+    globals.frustum[0] = glm::vec4(vp[0][3] + vp[0][0], vp[1][3] + vp[1][0], vp[2][3] + vp[2][0], vp[3][3] + vp[3][0]); // left
+    globals.frustum[1] = glm::vec4(vp[0][3] - vp[0][0], vp[1][3] - vp[1][0], vp[2][3] - vp[2][0], vp[3][3] - vp[3][0]); // right
+    globals.frustum[2] = glm::vec4(vp[0][3] + vp[0][1], vp[1][3] + vp[1][1], vp[2][3] + vp[2][1], vp[3][3] + vp[3][1]); // bottom
+    globals.frustum[3] = glm::vec4(vp[0][3] - vp[0][1], vp[1][3] - vp[1][1], vp[2][3] - vp[2][1], vp[3][3] - vp[3][1]); // top
+    globals.frustum[4] = glm::vec4(vp[0][3] + vp[0][2], vp[1][3] + vp[1][2], vp[2][3] + vp[2][2], vp[3][3] + vp[3][2]); // near
 
     // normalize normals
-    for (int i=0; i<6; i++) {
+    for (int i=0; i<5; i++) {
         float len = glm::length(glm::vec3(globals.frustum[i]));
         globals.frustum[i]/=len;
     }
