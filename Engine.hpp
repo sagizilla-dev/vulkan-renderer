@@ -143,7 +143,7 @@ public:
     ~Engine();
     void run();
 
-    bool meshShadersEnabled = VK_FALSE;
+    bool meshShadersEnabled = VK_TRUE;
 private:
     GLFWwindow* window = nullptr;
     VkInstance instance;
@@ -161,6 +161,8 @@ private:
     std::vector<VkImageView> swapchainImageViews;
     VkPipeline graphicsPipeline;
     VkPipeline meshGraphicsPipeline;
+    // this pipeline is only used with mesh graphics pipeline, and used to fill the initial depth buffer
+    VkPipeline hiZGraphicsPipeline;
     Shader shaders[5]; // collection of all shaders to be compiled
     std::set<DescriptorResourceInfo> descriptorResourceInfos; // descriptor resources information extracted from SPIR-V
     VkDescriptorSetLayout descriptorSetLayout;
@@ -170,6 +172,9 @@ private:
     VkPipelineLayout pipelineLayout;
     VkRenderPass renderpass;
     std::vector<VkFramebuffer> framebuffers;
+    // render pass with only 1 attachment (hi-z depth buffer)
+    VkRenderPass hiZRenderpass;
+    VkFramebuffer hiZFramebuffer;
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
     VkBuffer meshletBuffer;
@@ -189,6 +194,10 @@ private:
     VkImage depthBuffer;
     VkDeviceMemory depthBufferMemory;
     VkImageView depthBufferImageView;
+    VkImage hiZDepthBuffer;
+    VkDeviceMemory hiZDepthBufferMemory;
+    VkImageView hiZDepthBufferImageView;
+    VkSampler hiZDepthBufferSampler;
     VkImage colorBuffer;
     VkDeviceMemory colorBufferMemory;
     VkImageView colorBufferImageView;
@@ -220,10 +229,13 @@ private:
     void createDescriptorPool();
     void createDescriptorSets();
     void createGraphicsPipeline();
+    void createHiZGraphicsPipeline();
     void createShader(Shader& shader, std::string path);
     void createShaderModule(Shader& shader);
     void createRenderpass();
     void createFramebuffers();
+    void createHiZRenderpass();
+    void createHiZFramebuffer();
     void createCommandPool(VkCommandPool& cmdPool, VkCommandPoolCreateFlags flags, uint32_t queueFamily);
     void createCommandBuffer(VkCommandBuffer* cmdBuffer, int count, VkCommandPool& cmdPool);
     void createSemaphore(VkSemaphore& sem);
@@ -242,7 +254,9 @@ private:
     void createImage(VkImage& image, VkDeviceMemory& imageMemory, VkSampleCountFlagBits samples, int width, int height, uint32_t mipLevels,
         VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags memoryProperties);
     void createTextureSampler();
+    void createHiZSampler();
     void createDepthBuffer();
+    void createHiZDepthBuffer();
     void createColorBuffer();
     void createQueryPools();
     VkFormat findDepthFormat();

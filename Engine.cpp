@@ -23,10 +23,14 @@ Engine::Engine() {
     createCommandPool(transferCmdPool, VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, queueFamilies.transferFamily.value());
     createDepthBuffer();
     createColorBuffer();
+    createHiZDepthBuffer();
     createRenderpass();
     createFramebuffers();
+    createHiZRenderpass();
+    createHiZFramebuffer();
     createTextureImage();
     createTextureSampler();
+    createHiZSampler();
     createVertexBuffer();
     createIndexBuffer();
     createMeshletDataBuffer();
@@ -39,9 +43,13 @@ Engine::Engine() {
     createDescriptorPool();
     createDescriptorSets();
     createGraphicsPipeline();
+    createHiZGraphicsPipeline();
     createQueryPools();
 }
 Engine::~Engine() {
+    for (auto& shader: shaders) {
+        vkDestroyShaderModule(device, shader.module, nullptr);
+    }
     vkDestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, nullptr);
     vkDestroyBuffer(device, meshletDataBuffer, nullptr);
     vkFreeMemory(device, meshletDataBufferMemory, nullptr);
@@ -66,10 +74,12 @@ Engine::~Engine() {
     vkDestroyCommandPool(device, graphicsCmdPool, nullptr); // command buffers are freed when command pool is destroyed
     vkDestroyPipeline(device, graphicsPipeline, nullptr);
     vkDestroyPipeline(device, meshGraphicsPipeline, nullptr);
+    vkDestroyPipeline(device, hiZGraphicsPipeline, nullptr);
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     vkDestroyRenderPass(device, renderpass, nullptr);
+    vkDestroyRenderPass(device, hiZRenderpass, nullptr);
     cleanupSwapchain();
     vkDestroyDevice(device, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
@@ -128,8 +138,8 @@ void Engine::run() {
                         avgCpuTime+=cpuTimes[i]/200;
                     }
                     double trianglesPerSec = (indices.size()/3) / (avgGpuTime*1e-3);
-                    snprintf(title, sizeof(title), "GPU Time: %.3f ms, CPU Time: %.3f ms, %i meshlets, %i triangles, %.2fB tri/sec", 
-                            avgGpuTime, avgCpuTime, int(meshlets.size()), int(indices.size())/3, 
+                    snprintf(title, sizeof(title), "(%s) GPU Time: %.3f ms, CPU Time: %.3f ms, %i meshlets, %i triangles, %.2fB tri/sec", 
+                            meshShadersEnabled ? "MESH" : "VERT", avgGpuTime, avgCpuTime, int(meshlets.size()), int(indices.size())/3, 
                             DRAW_COUNT * trianglesPerSec*1e-9);
                     glfwSetWindowTitle(window, title);
                     gpuTimes.clear();
@@ -819,7 +829,7 @@ void Engine::createDescriptorPool() {
     std::vector<VkDescriptorPoolSize> poolSizes(2);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     // number of descriptors of a specific type
-    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT*2;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     // Meshlets, meshlet's data (vertices and indices) and vertices, and transformations
     poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT*4;
@@ -846,7 +856,7 @@ void Engine::createDescriptorSets() {
 
     // bind the actual data to descriptor sets
     for (size_t i=0; i<descriptorSets.size(); i++) {
-        std::vector<DescriptorData> data(5);
+        std::vector<DescriptorData> data(6);
         // image and sampler
         data[0].imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         data[0].imageInfo.imageView = textureImageView;
@@ -867,6 +877,10 @@ void Engine::createDescriptorSets() {
         data[4].bufferInfo.buffer = transformBuffers[i];
         data[4].bufferInfo.offset = 0;
         data[4].bufferInfo.range = sizeof(Transform)*DRAW_COUNT;
+        // hi-z depth buffer
+        data[5].imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        data[5].imageInfo.imageView = hiZDepthBufferImageView;
+        data[5].imageInfo.sampler = hiZDepthBufferSampler;
 
         // vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
         vkUpdateDescriptorSetWithTemplate(device, descriptorSets[i], descriptorUpdateTemplate, data.data());
@@ -996,9 +1010,86 @@ void Engine::createGraphicsPipeline() {
 
     // we can delete shader module right away since compilation and
     // linking of shaders are done when pipeline is created
-    for (auto& shader: shaders) {
-        vkDestroyShaderModule(device, shader.module, nullptr);
-    }
+    // for (auto& shader: shaders) {
+    //     vkDestroyShaderModule(device, shader.module, nullptr);
+    // }
+}
+void Engine::createHiZGraphicsPipeline() {
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(2);
+    shaderStageInfos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStageInfos[0].module = shaders[2].module;
+    shaderStageInfos[0].pName = "main";
+    shaderStageInfos[0].stage = shaders[2].stage;
+    shaderStageInfos[0].pSpecializationInfo = VK_NULL_HANDLE;
+    shaderStageInfos[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStageInfos[1].module = shaders[3].module;
+    shaderStageInfos[1].pName = "main";
+    shaderStageInfos[1].stage = shaders[3].stage;
+    shaderStageInfos[1].pSpecializationInfo = VK_NULL_HANDLE;
+
+    std::vector<VkDynamicState> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+    VkPipelineDynamicStateCreateInfo dynamicStateInfo{};
+    dynamicStateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicStateInfo.dynamicStateCount = dynamicStates.size();
+    dynamicStateInfo.pDynamicStates = dynamicStates.data();
+
+    VkPipelineInputAssemblyStateCreateInfo assemblyInfo{};
+    assemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    assemblyInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    assemblyInfo.primitiveRestartEnable = VK_FALSE;
+
+    VkPipelineViewportStateCreateInfo viewportInfo{};
+    viewportInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportInfo.scissorCount = 1;
+    viewportInfo.viewportCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo rasterInfo{};
+    rasterInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterInfo.rasterizerDiscardEnable = VK_FALSE;
+    rasterInfo.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterInfo.lineWidth = 1.0f;
+    rasterInfo.cullMode = VK_CULL_MODE_BACK_BIT;
+    rasterInfo.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterInfo.depthBiasEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo msaaInfo{};
+    msaaInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaaInfo.sampleShadingEnable = VK_FALSE;
+    msaaInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencilInfo{};
+    depthStencilInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencilInfo.depthTestEnable = VK_TRUE;
+    depthStencilInfo.depthWriteEnable = VK_TRUE;
+    depthStencilInfo.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    depthStencilInfo.depthBoundsTestEnable = VK_FALSE;
+    depthStencilInfo.stencilTestEnable = VK_FALSE;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = shaderStageInfos.data();
+    pipelineInfo.pVertexInputState = nullptr;
+    pipelineInfo.pInputAssemblyState = &assemblyInfo;
+    pipelineInfo.pViewportState = &viewportInfo;
+    pipelineInfo.pRasterizationState = &rasterInfo;
+    pipelineInfo.pMultisampleState = &msaaInfo;
+    pipelineInfo.pDepthStencilState = &depthStencilInfo;
+    pipelineInfo.pColorBlendState = nullptr;
+    pipelineInfo.pDynamicState = &dynamicStateInfo;
+    pipelineInfo.layout = pipelineLayout;
+    pipelineInfo.renderPass = hiZRenderpass;
+    pipelineInfo.subpass = 0;
+    pipelineInfo.basePipelineHandle = VK_NULL_HANDLE;
+
+    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &hiZGraphicsPipeline));
+
+    // for (auto& shader: shaders) {
+    //     vkDestroyShaderModule(device, shader.module, nullptr);
+    // }
 }
 void Engine::createShader(Shader& shader, std::string path) {
     // SPIR-V is read as a vector of bytes (char), so we need to convert it
@@ -1127,6 +1218,56 @@ void Engine::createFramebuffers() {
         VK_CHECK(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffers[i]));
     }
 }
+void Engine::createHiZRenderpass() {
+    std::vector<VkAttachmentDescription> attachmentDescriptions(1);
+    attachmentDescriptions[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachmentDescriptions[0].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    attachmentDescriptions[0].format = findDepthFormat();
+    attachmentDescriptions[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachmentDescriptions[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachmentDescriptions[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachmentDescriptions[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachmentDescriptions[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+    std::vector<VkAttachmentReference> attachmentReferences(1);
+    attachmentReferences[0].attachment = 0;
+    attachmentReferences[0].layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.pDepthStencilAttachment = &attachmentReferences[0];
+
+    // VkSubpassDependency subpassDependency{};
+    // subpassDependency.srcSubpass = 0;
+    // subpassDependency.dstSubpass = VK_SUBPASS_EXTERNAL;
+    // subpassDependency.srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    // subpassDependency.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    // subpassDependency.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    // subpassDependency.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    // subpassDependency.dependencyFlags = 0;
+
+    VkRenderPassCreateInfo renderpassInfo{};
+    renderpassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderpassInfo.attachmentCount = attachmentDescriptions.size();
+    renderpassInfo.pAttachments = attachmentDescriptions.data();
+    renderpassInfo.subpassCount = 1;
+    renderpassInfo.pSubpasses = &subpass;
+    // renderpassInfo.dependencyCount = 1;
+    // renderpassInfo.pDependencies = &subpassDependency;
+    VK_CHECK(vkCreateRenderPass(device, &renderpassInfo, nullptr, &hiZRenderpass));
+}
+void Engine::createHiZFramebuffer() {
+    std::vector<VkImageView> attachments = {hiZDepthBufferImageView};
+    VkFramebufferCreateInfo framebufferInfo{};
+    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    framebufferInfo.renderPass = hiZRenderpass;
+    framebufferInfo.attachmentCount = attachments.size();
+    framebufferInfo.pAttachments = attachments.data();
+    framebufferInfo.width = swapchainExtent.width;
+    framebufferInfo.height = swapchainExtent.height;
+    framebufferInfo.layers = 1;
+    VK_CHECK(vkCreateFramebuffer(device, &framebufferInfo, nullptr, &hiZFramebuffer));
+}
 void Engine::createCommandPool(VkCommandPool& cmdPool, VkCommandPoolCreateFlags flags, uint32_t queueFamily) {
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -1172,6 +1313,11 @@ void Engine::cleanupSwapchain() {
     vkDestroyImage(device, depthBuffer, nullptr);
     vkFreeMemory(device, depthBufferMemory, nullptr);
     vkDestroyImageView(device, depthBufferImageView, nullptr);
+    vkDestroyImage(device, hiZDepthBuffer, nullptr);
+    vkFreeMemory(device, hiZDepthBufferMemory, nullptr);
+    vkDestroyImageView(device, hiZDepthBufferImageView, nullptr);
+    vkDestroySampler(device, hiZDepthBufferSampler, nullptr);
+    vkDestroyFramebuffer(device, hiZFramebuffer, nullptr);
     for (const auto framebuffer: framebuffers) {
         vkDestroyFramebuffer(device, framebuffer, nullptr);
     }
@@ -1379,8 +1525,9 @@ void Engine::createTextureImage() {
     vkUnmapMemory(device, stagingBufferMemory);
     stbi_image_free(pixels);
     
-    createImage(textureImage, textureImageMemory, VK_SAMPLE_COUNT_1_BIT, texWidth, texHeight, mipLevels, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, 
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    createImage(textureImage, textureImageMemory, VK_SAMPLE_COUNT_1_BIT, texWidth, texHeight, mipLevels, VK_FORMAT_R8G8B8A8_SRGB, 
+        VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |VK_IMAGE_USAGE_SAMPLED_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_SRGB, mipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     copyBufferToImage(stagingBuffer, textureImage, texWidth, texHeight);
@@ -1449,12 +1596,43 @@ void Engine::createTextureSampler() {
     samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
     VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler));
 }
+void Engine::createHiZSampler() {
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_NEAREST;
+    samplerInfo.minFilter = VK_FILTER_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(pDevice, &props);
+    samplerInfo.maxAnisotropy = props.limits.maxSamplerAnisotropy;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+    VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &hiZDepthBufferSampler));
+}
 void Engine::createDepthBuffer() {
     VkFormat depthFormat = findDepthFormat();
     createImage(depthBuffer, depthBufferMemory, msaaSamples, swapchainExtent.width, swapchainExtent.height, 1, depthFormat, 
         VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     createImageView(depthFormat, depthBuffer, 1, VK_IMAGE_ASPECT_DEPTH_BIT, depthBufferImageView);
     transitionImageLayout(depthBuffer, depthFormat, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+}
+void Engine::createHiZDepthBuffer() {
+    VkFormat depthFormat = findDepthFormat();
+    uint32_t hiZMipLevels = std::floor(std::log2(std::max(swapchainExtent.width, swapchainExtent.height)))+1;
+    createImage(hiZDepthBuffer, hiZDepthBufferMemory, VK_SAMPLE_COUNT_1_BIT, swapchainExtent.width, swapchainExtent.height, hiZMipLevels, 
+        depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    createImageView(depthFormat, hiZDepthBuffer, 1, VK_IMAGE_ASPECT_DEPTH_BIT, hiZDepthBufferImageView);
+    transitionImageLayout(hiZDepthBuffer, depthFormat, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 }
 void Engine::createColorBuffer() {
     // Vulkan specs enforce that images with more than one sample per pixel must have 1 mip level
@@ -2015,6 +2193,84 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
     {
         vkCmdResetQueryPool(cmdBuffer, queryPools[currentFrame], 0, 2);
         vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPools[currentFrame], 0);
+
+        if (meshShadersEnabled) {
+            VkRenderPassBeginInfo hiZRenderpassBeginInfo{};
+            hiZRenderpassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            hiZRenderpassBeginInfo.renderPass = hiZRenderpass;
+            hiZRenderpassBeginInfo.framebuffer = hiZFramebuffer;
+            hiZRenderpassBeginInfo.renderArea.extent = swapchainExtent;
+            hiZRenderpassBeginInfo.renderArea.offset = {0, 0};
+            std::array<VkClearValue, 1> clearValues{};
+            clearValues[0].depthStencil = {0.0f, 0};
+            hiZRenderpassBeginInfo.clearValueCount = clearValues.size();
+            hiZRenderpassBeginInfo.pClearValues = clearValues.data();
+            vkCmdBeginRenderPass(cmdBuffer, &hiZRenderpassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+            {
+                vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, hiZGraphicsPipeline);
+
+                vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets[currentFrame], 0, nullptr);
+
+                VkViewport viewport{};
+                viewport.x = 0.0f;
+                viewport.y = 0.0f;
+                viewport.width = static_cast<float>(swapchainExtent.width);
+                viewport.height = static_cast<float>(swapchainExtent.height);
+                viewport.minDepth = 0.0f;
+                viewport.maxDepth = 1.0f;
+                vkCmdSetViewport(cmdBuffer, 0, 1, &viewport);
+                VkRect2D scissor{};
+                scissor.extent = swapchainExtent;
+                scissor.offset = {0, 0};
+                vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
+
+                PFN_vkCmdDrawMeshTasksIndirectNV vkCmdDrawMeshTasksIndirectNV = 
+                    (PFN_vkCmdDrawMeshTasksIndirectNV)vkGetDeviceProcAddr(device, "vkCmdDrawMeshTasksIndirectNV");
+
+                VkShaderStageFlags pushConstantStages = 0;
+                for (const auto& shader: shaders) {
+                    if (shader.hasPushConstants) {
+                        pushConstantStages |= shader.stage;
+                    }
+                }
+
+                Globals globals = createGlobals();
+                vkCmdPushConstants(cmdBuffer, pipelineLayout, pushConstantStages, 0, sizeof(Globals), &globals);
+                
+                vkCmdDrawMeshTasksIndirectNV(cmdBuffer, indirectBuffer, offsetof(DrawIndirect, commandMeshIndirect), DRAW_COUNT, sizeof(DrawIndirect));
+            }
+            vkCmdEndRenderPass(cmdBuffer);
+
+            VkImageMemoryBarrier barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = hiZDepthBuffer;
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            barrier.subresourceRange.baseArrayLayer = 0;
+            barrier.subresourceRange.baseMipLevel = 0;
+            barrier.subresourceRange.layerCount = 1;
+            barrier.subresourceRange.levelCount = 1;
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = 0;
+
+            VkPipelineStageFlags srcStage;
+            VkPipelineStageFlags dstStage;
+            barrier.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            srcStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            vkCmdPipelineBarrier(
+                cmdBuffer, 
+                srcStage, dstStage,
+                0,
+                0, nullptr,
+                0, nullptr,
+                1, &barrier
+            );
+        }
 
         VkRenderPassBeginInfo renderpassBeginInfo{};
         renderpassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
