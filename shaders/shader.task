@@ -23,6 +23,8 @@ layout(set = 0, binding = 2) readonly buffer Meshlets {
     Meshlet meshlets[];
 };
 
+layout(set = 0, binding = 5) uniform sampler2D hiZPyramidSampler;
+
 out taskNV block {
     // those are indices of meshlets that are not culled
     // note that this array must be filled with values in a contiguous order, i.e there must be no gaps of garbage data
@@ -53,6 +55,27 @@ bool frustumCull(vec3 coneApex, float radius) {
     return false;
 }
 
+bool occlusionCull(vec3 coneApex, float radius) {
+    // now the coordinates are in clip space, with .w component storing -z value
+    vec4 clipPosition = globals.proj * globals.view * vec4(coneApex, 1.0);
+    // convert to normalized device coordinates
+    vec3 ndcPosition = clipPosition.xyz/clipPosition.w;
+    float ndcRadius = (globals.proj[1][1]*radius)/clipPosition.w;
+    // texture coordinates of the apex
+    vec2 uv = ndcPosition.xy * 0.5 + 0.5; // convert ndc coordinates from [-1, 1] to [0, 1];
+    uv.y = 1.0 - uv.y;
+
+    vec2 texSize = vec2(textureSize(hiZPyramidSampler, 0));
+    float screenPixels = ndcRadius * 2.0 * max(texSize.x, texSize.y); // how many pixels the bounding sphere occupies
+    // get the mip level where the entire bounding sphere is occupied by 1 pixel
+    float mipLevel = ceil(log2(max(screenPixels, 1.0)));
+    mipLevel = clamp(mipLevel, 0.0, float(textureQueryLevels(hiZPyramidSampler)-1));
+
+    float sampledDepth = textureLod(hiZPyramidSampler, uv, mipLevel).r;
+    // is this correct? what if coneApex + radius is actually visible?
+    return ndcPosition.z < sampledDepth - 0.05; // subtract bias to account for pixel vs sphere comparison
+}
+
 void main() {
     uint localMeshletID = gl_WorkGroupID.x; // meshlets batch index
     uint tid = gl_LocalInvocationID.x; // meshlet index within the batch
@@ -74,8 +97,8 @@ void main() {
         float coneW = meshlets[meshletID].cone.w;
         // radius must be scaled into world coordinates
         float radius = meshlets[meshletID].radius * length(transform.model[0].xyz);
-
-        accept = !coneCull(coneAxis, coneW, cameraPos, coneApex) && !frustumCull(coneApex, radius);
+        
+        accept = !frustumCull(coneApex, radius) && !occlusionCull(coneApex, radius) && !coneCull(coneAxis, coneW, cameraPos, coneApex);
     }
     // ballot is a bitmask where each bit represents one thread's boolean value
     // this function creates the bitmask based on the variable provided
