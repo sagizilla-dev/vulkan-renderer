@@ -13,6 +13,7 @@ void main() {
     // pixel coordinates
     vec2 uv = gl_FragCoord.xy / vec2(textureSize(hiZDepthBufferSampler, 0));
     // outFragColor = texture(texSampler, TexCoords);
-    outFragColor = texture(hiZDepthBufferSampler, uv);
+    float mipLevel = 4.0;
+    outFragColor = textureLod(hiZDepthBufferSampler, uv, mipLevel);
     // outFragColor = vec4(Normal, 1.0);
 }

@@ -1,0 +1,31 @@
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D srcImage;
+layout(set = 0, binding = 1, r32f) uniform writeonly image2D dstImage;
+
+layout(push_constant) uniform block {
+    int downsampling;
+};
+
+void main() {
+    ivec2 dstCoords = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dstSize = imageSize(dstImage); // returns the size in texels
+    if (dstCoords.x >= dstSize.x || dstCoords.y >= dstSize.y) {
+        return;
+    }
+
+    if (downsampling == 0) {
+        float depth = texelFetch(srcImage, dstCoords, 0).r;
+        imageStore(dstImage, dstCoords, vec4(depth));
+    } else {
+        ivec2 srcCoords = dstCoords*2;
+        float d0 = texelFetch(srcImage, srcCoords+ivec2(0, 0), 0).r;
+        float d1 = texelFetch(srcImage, srcCoords+ivec2(1, 0), 0).r;
+        float d2 = texelFetch(srcImage, srcCoords+ivec2(0, 1), 0).r;
+        float d3 = texelFetch(srcImage, srcCoords+ivec2(1, 1), 0).r;
+        float minDepth = min(min(d0, d1), min(d2, d3));
+        imageStore(dstImage, dstCoords, vec4(minDepth));
+    }
+}

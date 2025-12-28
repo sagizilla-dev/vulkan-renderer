@@ -28,6 +28,9 @@ Engine::Engine() {
     createFramebuffers();
     createHiZRenderpass();
     createHiZFramebuffer();
+    createHiZPyramid();
+    createHiZPyramidSampler();
+    createHiZPyramidShader();
     createTextureImage();
     createTextureSampler();
     createHiZSampler();
@@ -42,14 +45,27 @@ Engine::Engine() {
     createDescriptorUpdateTemplate();
     createDescriptorPool();
     createDescriptorSets();
+    createHiZPyramidComputePipeline();
+    createHiZPyramidDescriptorSets();
     createGraphicsPipeline();
     createHiZGraphicsPipeline();
     createQueryPools();
 }
 Engine::~Engine() {
+    vkDestroyDescriptorSetLayout(device, hiZPyramidDescriptorSetLayout, nullptr);
+    vkDestroyPipelineLayout(device, hiZPyramidPipelineLayout, nullptr);
+    vkDestroyPipeline(device, hiZPyramidComputePipeline, nullptr);
+    vkDestroyImage(device, hiZPyramid, nullptr);
+    vkFreeMemory(device, hiZPyramidMemory, nullptr);
+    vkDestroyImageView(device, hiZPyramidImageView, nullptr);
+    for (int i=0; i<hiZMipLevels; i++) {
+        vkDestroyImageView(device, hiZPyramidImageViews[i], nullptr);
+    }
     for (auto& shader: shaders) {
         vkDestroyShaderModule(device, shader.module, nullptr);
     }
+    vkDestroySampler(device, hiZPyramidSampler, nullptr);
+    vkDestroyShaderModule(device, hiZPyramidShader.module, nullptr);
     vkDestroyDescriptorUpdateTemplate(device, descriptorUpdateTemplate, nullptr);
     vkDestroyBuffer(device, meshletDataBuffer, nullptr);
     vkFreeMemory(device, meshletDataBufferMemory, nullptr);
@@ -826,20 +842,22 @@ void Engine::createDescriptorUpdateTemplate() {
 void Engine::createDescriptorPool() {
     // so the transform buffer is now a storage buffer instead of a uniform
     // since we cannot make a dynamic array inside a uniform block
-    std::vector<VkDescriptorPoolSize> poolSizes(2);
+    std::vector<VkDescriptorPoolSize> poolSizes(3);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     // number of descriptors of a specific type
-    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT*2;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT*2+hiZMipLevels; // texture image, depth buffer and image for each depth mip level 
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     // Meshlets, meshlet's data (vertices and indices) and vertices, and transformations
     poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT*4;
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[2].descriptorCount = hiZMipLevels;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = poolSizes.size();
     poolInfo.pPoolSizes = poolSizes.data();
     // total number of descriptor sets that are to be allocated
-    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT;
+    poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT+hiZMipLevels;
     VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
 }
 void Engine::createDescriptorSets() {
@@ -878,8 +896,8 @@ void Engine::createDescriptorSets() {
         data[4].bufferInfo.offset = 0;
         data[4].bufferInfo.range = sizeof(Transform)*DRAW_COUNT;
         // hi-z depth buffer
-        data[5].imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        data[5].imageInfo.imageView = hiZDepthBufferImageView;
+        data[5].imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        data[5].imageInfo.imageView = hiZPyramidImageView;
         data[5].imageInfo.sampler = hiZDepthBufferSampler;
 
         // vkUpdateDescriptorSets(device, writeDescriptors.size(), writeDescriptors.data(), 0, nullptr);
@@ -1627,12 +1645,157 @@ void Engine::createDepthBuffer() {
 }
 void Engine::createHiZDepthBuffer() {
     VkFormat depthFormat = findDepthFormat();
-    uint32_t hiZMipLevels = std::floor(std::log2(std::max(swapchainExtent.width, swapchainExtent.height)))+1;
+    hiZMipLevels = std::floor(std::log2(std::max(swapchainExtent.width, swapchainExtent.height)))+1;
     createImage(hiZDepthBuffer, hiZDepthBufferMemory, VK_SAMPLE_COUNT_1_BIT, swapchainExtent.width, swapchainExtent.height, hiZMipLevels, 
         depthFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     createImageView(depthFormat, hiZDepthBuffer, 1, VK_IMAGE_ASPECT_DEPTH_BIT, hiZDepthBufferImageView);
     transitionImageLayout(hiZDepthBuffer, depthFormat, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+}
+void Engine::createHiZPyramid() {
+    VkFormat hiZPyramidFormat = VK_FORMAT_R32_SFLOAT;
+    createImage(hiZPyramid, hiZPyramidMemory, VK_SAMPLE_COUNT_1_BIT, swapchainExtent.width, swapchainExtent.height, hiZMipLevels, 
+        hiZPyramidFormat, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    createImageView(hiZPyramidFormat, hiZPyramid, hiZMipLevels, VK_IMAGE_ASPECT_COLOR_BIT, hiZPyramidImageView);
+    hiZPyramidImageViews.resize(hiZMipLevels);
+    for (int i=0; i<hiZMipLevels; i++) {
+        VkImageViewCreateInfo imageViewInfo{};
+        imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        imageViewInfo.format = hiZPyramidFormat;
+        imageViewInfo.image = hiZPyramid;
+        imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        imageViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        imageViewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        imageViewInfo.subresourceRange.baseArrayLayer = 0;
+        imageViewInfo.subresourceRange.baseMipLevel = i;
+        imageViewInfo.subresourceRange.layerCount = 1;
+        imageViewInfo.subresourceRange.levelCount = 1;
+        VK_CHECK(vkCreateImageView(device, &imageViewInfo, nullptr, &hiZPyramidImageViews[i]));
+    }
+    // we need to convert it to VK_IMAGE_GENERAL_LAYOUT so we can write into it
+    transitionImageLayout(hiZPyramid, hiZPyramidFormat, hiZMipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+}
+void Engine::createHiZPyramidSampler() {
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_NEAREST; 
+    samplerInfo.minFilter = VK_FILTER_NEAREST;
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.anisotropyEnable = VK_FALSE;
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(pDevice, &props);
+    samplerInfo.maxAnisotropy = props.limits.maxSamplerAnisotropy;
+    samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+    VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &hiZPyramidSampler));
+}
+void Engine::createHiZPyramidShader() {
+    auto bytes = readFile(COMP_SHADER_PATH);
+    uint32_t wordCount = bytes.size()/4;
+    std::vector<uint32_t> byteCode(wordCount);
+    memcpy(byteCode.data(), bytes.data(), bytes.size());
+    hiZPyramidShader.code = byteCode;
+    hiZPyramidShader.codeSize = bytes.size();
+    hiZPyramidShader.hasPushConstants = false;
+    hiZPyramidShader.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    createShaderModule(hiZPyramidShader);
+}
+void Engine::createHiZPyramidComputePipeline() {
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStageInfos(1);
+    shaderStageInfos[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStageInfos[0].module = hiZPyramidShader.module;
+    shaderStageInfos[0].pName = "main";
+    shaderStageInfos[0].stage = hiZPyramidShader.stage;
+    shaderStageInfos[0].pSpecializationInfo = VK_NULL_HANDLE;
+
+    std::vector<VkDescriptorSetLayoutBinding> bindings(2);
+    bindings[0].binding = 0;
+    bindings[0].descriptorCount = 1;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    bindings[1].binding = 1;
+    bindings[1].descriptorCount = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{};
+    descriptorSetLayoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    descriptorSetLayoutInfo.pBindings = bindings.data();
+    descriptorSetLayoutInfo.bindingCount = bindings.size();
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &hiZPyramidDescriptorSetLayout));
+
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(int);
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pSetLayouts = &hiZPyramidDescriptorSetLayout;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    VK_CHECK(vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &hiZPyramidPipelineLayout));
+
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.layout = hiZPyramidPipelineLayout;
+    pipelineInfo.stage = shaderStageInfos[0];
+    VK_CHECK(vkCreateComputePipelines(device, 0, 1, &pipelineInfo, nullptr, &hiZPyramidComputePipeline));
+}
+void Engine::createHiZPyramidDescriptorSets() {
+    std::vector<VkDescriptorSetLayout> layouts(hiZMipLevels, hiZPyramidDescriptorSetLayout);
+    hiZPyramidDescriptorSets.resize(hiZMipLevels);
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.pSetLayouts = layouts.data();
+    allocInfo.descriptorSetCount = hiZMipLevels;
+    allocInfo.descriptorPool = descriptorPool;
+    VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, hiZPyramidDescriptorSets.data()));
+    for (int i=0; i<hiZMipLevels; i++) {
+        VkDescriptorImageInfo srcInfo{};
+        srcInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        if (i==0) {
+            srcInfo.imageView = hiZDepthBufferImageView;
+        } else {
+            srcInfo.imageView = hiZPyramidImageViews[i-1];
+        }
+        srcInfo.sampler = hiZPyramidSampler;
+
+        VkDescriptorImageInfo dstInfo{};
+        dstInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        dstInfo.imageView = hiZPyramidImageViews[i];
+        dstInfo.sampler = hiZPyramidSampler;
+
+        std::vector<VkWriteDescriptorSet> writes(2);
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = hiZPyramidDescriptorSets[i];
+        writes[0].dstBinding = 0;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].pImageInfo = &srcInfo;
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = hiZPyramidDescriptorSets[i];
+        writes[1].dstBinding = 1;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].pImageInfo = &dstInfo;
+
+        vkUpdateDescriptorSets(device, writes.size(), writes.data(), 0, nullptr);
+    }
 }
 void Engine::createColorBuffer() {
     // Vulkan specs enforce that images with more than one sample per pixel must have 1 mip level
@@ -1664,6 +1827,39 @@ VkFormat Engine::findDepthFormat() {
         }
     }
     throw std::runtime_error("Cannot find a suitable format for depth image");
+}
+void Engine::buildHiZPyramid(VkCommandBuffer cmdBuffer) {
+    vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, hiZPyramidComputePipeline);
+
+    uint32_t width = swapchainExtent.width;
+    uint32_t height = swapchainExtent.height;
+
+    for (int i=0; i<hiZMipLevels; i++) {
+        vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, hiZPyramidPipelineLayout, 0, 1, &hiZPyramidDescriptorSets[i], 
+            0, nullptr);
+        int srcImage = i;
+        vkCmdPushConstants(cmdBuffer, hiZPyramidPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(int), &srcImage);
+        uint32_t mipWidth = std::max(1u, width>>i);
+        uint32_t mipHeight = std::max(1u, height>>i);
+        vkCmdDispatch(cmdBuffer, (mipWidth+7)/8, (mipHeight+7)/8, 1);
+
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = hiZPyramid;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel = i;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmdBuffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
 }
 
 bool Engine::checkInstanceExtensionsSupport() {
@@ -2244,7 +2440,7 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
             VkImageMemoryBarrier barrier{};
             barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
             barrier.oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.image = hiZDepthBuffer;
@@ -2270,6 +2466,8 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
                 0, nullptr,
                 1, &barrier
             );
+
+            buildHiZPyramid(cmdBuffer);
         }
 
         VkRenderPassBeginInfo renderpassBeginInfo{};
@@ -2399,6 +2597,12 @@ void Engine::transitionImageLayout(VkImage image, VkFormat format, uint32_t mipL
         srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        
+        srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dstStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    }  else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_GENERAL) {
         barrier.srcAccessMask = 0;
         barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         

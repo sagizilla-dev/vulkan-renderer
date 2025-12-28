@@ -198,6 +198,17 @@ private:
     VkDeviceMemory hiZDepthBufferMemory;
     VkImageView hiZDepthBufferImageView;
     VkSampler hiZDepthBufferSampler;
+    VkImage hiZPyramid;
+    VkDeviceMemory hiZPyramidMemory;
+    VkImageView hiZPyramidImageView; // this is the image view into all mip levels, and used for culling
+    std::vector<VkImageView> hiZPyramidImageViews; // this stores an image view for each mip level, and used to write into each level
+    uint32_t hiZMipLevels;
+    VkSampler hiZPyramidSampler;
+    Shader hiZPyramidShader;
+    VkPipeline hiZPyramidComputePipeline;
+    VkPipelineLayout hiZPyramidPipelineLayout;
+    VkDescriptorSetLayout hiZPyramidDescriptorSetLayout;
+    std::vector<VkDescriptorSet> hiZPyramidDescriptorSets;
     VkImage colorBuffer;
     VkDeviceMemory colorBufferMemory;
     VkImageView colorBufferImageView;
@@ -257,9 +268,15 @@ private:
     void createHiZSampler();
     void createDepthBuffer();
     void createHiZDepthBuffer();
+    void createHiZPyramid();
+    void createHiZPyramidSampler();
+    void createHiZPyramidShader();
+    void createHiZPyramidComputePipeline();
+    void createHiZPyramidDescriptorSets();
     void createColorBuffer();
     void createQueryPools();
     VkFormat findDepthFormat();
+    void buildHiZPyramid(VkCommandBuffer cmdBuffer);
 
     const glm::vec3 cameraPos{2.0f, 2.0f, 2.0f};
     const int MAX_FRAMES_IN_FLIGHT = 4;
@@ -273,6 +290,7 @@ private:
     const std::string MESH_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.mesh.spv";
     const std::string FRAG_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.frag.spv";
     const std::string TASK_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.task.spv";
+    const std::string COMP_SHADER_PATH = std::string(PROJECT_ROOT) + "/shaders/shader.comp.spv";
     std::vector<const char*> instanceExtensions = {
         "VK_KHR_surface",
         "VK_KHR_xcb_surface"

@@ -12,6 +12,7 @@ file(GLOB_RECURSE SHADER_SOURCES
     "${CMAKE_SOURCE_DIR}/shaders/*.frag"
     "${CMAKE_SOURCE_DIR}/shaders/*.mesh"
     "${CMAKE_SOURCE_DIR}/shaders/*.task"
+    "${CMAKE_SOURCE_DIR}/shaders/*.comp"
 )
 set(SHADER_HEADERS
     ${CMAKE_SOURCE_DIR}/shaders/common.h
