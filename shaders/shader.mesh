@@ -76,8 +76,8 @@ void main() {
                 vertices[globalVertexID].vz, 1.0);
 
         vec3 decompressed = vec3(vertices[globalVertexID].nx, vertices[globalVertexID].ny, vertices[globalVertexID].nz) / 255.0 * 2.0 - 1.0;
-        // Normal[i] = decompressed;
-        Normal[i] = meshletColor(meshletID);
+        Normal[i] = decompressed;
+        // Normal[i] = meshletColor(meshletID);
 
         TexCoords[i] = vec2(vertices[globalVertexID].tu, vertices[globalVertexID].tv);
     }
