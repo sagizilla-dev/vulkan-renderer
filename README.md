@@ -2,18 +2,18 @@
 
 A GPU-driven rendering engine using Vulkan with mesh shading pipeline, custom culling, and SPIR-V reflection.
 
-<img src="assets/pretty_mesh_pipeline_kitten.png" width="600" alt="description">
+<img src="assets/mesh_pipeline_kittens.png" width="600" alt="description">
 
 ## Features
 
 - Mesh shaders with task shader culling
 - Frustum culling, backface cone culling, Hi-Z occlusion culling
-- 5.8x speedup over traditional vertex pipeline (93ms → 16ms)
-- Forsyth vertex cache optimization (35% improvement)
+- 5.8x speedup over traditional vertex pipeline
+- Forsyth vertex cache optimization (55% improvement)
 - SPIR-V reflection for automatic descriptor set layout generation
 - Multi-draw Indirect
 
-Tested on 3060 Ti, 800x600 resolution, 1000 Buddha models.
+Tested on 3060 Ti, 800x600 resolution, 1000 models.
 
 ## Notes
 There are a couple of interesting things I discovered during the development.
@@ -21,8 +21,12 @@ There are a couple of interesting things I discovered during the development.
 
 > Funny enough, this slightly changed Forsyth algorithm does try to enforce spatial locality, although the meshlets we see are not the what is usually expected. They are pretty elongated and don't really grow in a breadth-first manner. This might lead to inconsistent results for cone culling.
 
+<img src="assets/meshlets_mesh_pipeline_kittens.png" width="600" alt="description">
+
 > Another important note is that this version of the Forsyth algorithm enforces "soft" spatial locality, as in triangles in a meshlet might be vertex-connected, not edge-connected. This is usually not what is expected.
 
 > Secondly, cone culling is a very shaky concept in practice. We cull meshlets that are facing away from the camera, which sounds fair, but the results are pretty inconsistent and depend a lot on the geometry. For low-poly geometry, meshlet's cone might be too wide, which doesn't let us cull it. On the other hand, for high-poly geometry the details (which are represented using normal mapping in rendering) are represented using lots of triangles, so a small piece of the mesh might have a very weird-looking meshlet with a very wide cone. So, what can we cull? From my tests, it really depends on the mesh itself, but since cone testing is super cheap, it doesn't hurt to include it every time.
+
+<img src="assets/mesh_pipeline_buddhas.png" width="600" alt="description">
 
 > Third, occlusion culling is done here in a separate pass, which completely kills its purpose. I did it since my meshes are transforming in real time, as in they are not static. I could have used the previous frame's depth buffer to create Hi-Z pyramid, but then I would need to use motion vectors, and I didn't want to study that part. Building the pyramid itself is rather simple, but writing the culling logic is pretty confusing since we need to convert everything to clip-space, and then to NDC, and then to texture-space. Moreover, it doesn't produce much performance boost: we pay the cost of building geometry twice in exchange for processing less triangles later, and using less fragment shader. The problem is, the fragment shader is so simple it doesn't justify using occlusion culling, but it was a fun learning experiencce.

@@ -121,6 +121,10 @@ void Engine::run() {
     // timestampPeriod is the number of nanoseconds required for a timestamp query to be incremented by 1
     float timestampPeriod = props.limits.timestampPeriod;
     int frameCounter = 0;
+
+    for (int i=0; i<MAX_FRAMES_IN_FLIGHT; i++) {
+        updateTransforms(i);
+    }
     
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -184,7 +188,6 @@ void Engine::run() {
         auto cpuStart = std::chrono::high_resolution_clock::now();
         vkResetCommandBuffer(cmdBuffer[currentFrame], 0);
         
-        updateTransforms(currentFrame);
         recordCmdBuffer(cmdBuffer[currentFrame], imageIndex);
 
         VkSubmitInfo submitInfo{};
@@ -2356,13 +2359,13 @@ void Engine::updateTransforms(int index) {
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
     for (int i=0; i<DRAW_COUNT; i++) {
         Transform transform;
-        float offsetX = (float(rand())/RAND_MAX)*20.0f-10.0f;
-        float offsetY = (float(rand())/RAND_MAX)*20.0f-10.0f;
-        float offsetZ = (float(rand())/RAND_MAX)*20.0f-10.0f;
+        float offsetX = (float(rand())/RAND_MAX)*15.0f-7.0f;
+        float offsetY = (float(rand())/RAND_MAX)*15.0f-7.0f;
+        float offsetZ = (float(rand())/RAND_MAX)*15.0f-7.0f;
         float scale = 1.0f;
-        float rotateX = (float(rand())/RAND_MAX) * time * glm::radians(90.0f);
-        float rotateY = (float(rand())/RAND_MAX) * time * glm::radians(45.0f);
-        float rotateZ = (float(rand())/RAND_MAX) * time * glm::radians(30.0f);
+        float rotateX = (float(rand())/RAND_MAX) * glm::radians(30.0f);
+        float rotateY = (float(rand())/RAND_MAX) * glm::radians(45.0f);
+        float rotateZ = (float(rand())/RAND_MAX) * glm::radians(180.0f);
         transform.model = glm::translate(glm::mat4(1.0f), glm::vec3(offsetX, offsetY, offsetZ));
         transform.model *= glm::rotate(glm::mat4(1.0f), rotateX, glm::vec3(1.0f, 0.0f, 0.0f));
         transform.model *= glm::rotate(glm::mat4(1.0f), rotateY, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -2477,7 +2480,7 @@ void Engine::recordCmdBuffer(VkCommandBuffer& cmdBuffer, uint32_t imageIndex) {
         renderpassBeginInfo.renderArea.extent = swapchainExtent;
         renderpassBeginInfo.renderArea.offset = {0, 0};
         std::array<VkClearValue, 2> clearValues{};
-        clearValues[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+        clearValues[0].color = {{1.0f, 0.5f, 0.5f, 1.0f}};
         // in Vulkan 1.0 indicates the far view plane, and 0.0 indicates the near view plane
         // but since we are using reverse-z, those values are 0.0f and 1.0f respectively
         clearValues[1].depthStencil = {0.0f, 0};
